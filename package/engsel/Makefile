@@ -31,7 +31,7 @@ define Build/Compile
 	$(MAKE) -C $(PKG_BUILD_DIR) \
 		CC="$(TARGET_CC)" \
 		CFLAGS="$(TARGET_CFLAGS) -I$(PKG_BUILD_DIR)/include" \
-		LDFLAGS="$(TARGET_LDFLAGS) -lssl -lcrypto -lcurl -lm -lpthread"
+		LDFLAGS="$(TARGET_LDFLAGS) -lssl -lcrypto -lcurl -lm -lpthread -lqrencode"
 endef
 
 define Package/engsel/install
