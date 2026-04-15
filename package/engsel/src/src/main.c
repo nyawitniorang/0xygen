@@ -18,6 +18,9 @@ int is_logged_in = 0;
 double cached_balance = 0;
 char cached_exp[32] = "--";
 
+static time_t last_token_refresh = 0;
+#define TOKEN_REFRESH_INTERVAL 1800
+
 struct ActivePackage {
     char name[128];
     char quota_code[128];
@@ -167,8 +170,47 @@ void authenticate_and_fetch_balance(cJSON* tokens_arr, const char* B_CIAM, const
             cJSON_Delete(auth_response);
         }
     }
+    last_token_refresh = time(NULL);
 }
 
+void ensure_token_fresh(cJSON* tokens_arr, const char* B_CIAM, const char* B_API, const char* B_AUTH, const char* UA, const char* API_KEY, const char* XDATA_KEY, const char* X_API_SEC) {
+    time_t now = time(NULL);
+    if (is_logged_in && (now - last_token_refresh) > TOKEN_REFRESH_INTERVAL) {
+        printf("[*] Memperbarui token secara otomatis...\n");
+        authenticate_and_fetch_balance(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+        if (!is_logged_in) {
+            printf("[-] Gagal memperbarui token. Silakan login ulang.\n");
+        } else {
+            last_token_refresh = now;
+        }
+    }
+}
+
+char* normalize_phone_number(const char* input) {
+    if (!input) return NULL;
+    char cleaned[32];
+    int j = 0;
+    for (int i = 0; input[i] && j < 31; i++) {
+        if (input[i] >= '0' && input[i] <= '9') {
+            cleaned[j++] = input[i];
+        }
+    }
+    cleaned[j] = '\0';
+    int len = strlen(cleaned);
+    if (len < 10 || len > 14) return NULL;
+
+    if (strncmp(cleaned, "62", 2) == 0) {
+        return strdup(cleaned);
+    }
+    if (cleaned[0] == '0') {
+        char* result = malloc(32);
+        snprintf(result, 32, "62%s", cleaned + 1);
+        return result;
+    }
+    return NULL;
+}
+
+/* ========== FUNGSI ASLI (TIDAK DIUBAH) ========== */
 cJSON* do_family_bruteforce(const char* B_API, const char* API_KEY, const char* XDATA_KEY, const char* X_API_SEC, const char* id_tok, const char* f_code, int is_ent_override, const char* mig_override) {
     const char* migrations[] = {"NONE", "PRE_TO_PRIOH", "PRIOH_TO_PRIO", "PRIO_TO_PRIOH"};
     int enterprises[] = {0, 1};
@@ -473,7 +515,7 @@ void handle_payment_menu(const char* B_CIAM, const char* B_API, const char* B_AU
 }
 
 int main() {
-    srandom((unsigned int)time(NULL));   // <-- PERUBAHAN: srand -> srandom
+    srandom((unsigned int)time(NULL));
     load_env("/etc/engsel/.env");
     const char* B_CIAM = getenv("BASE_CIAM_URL"); const char* B_API = getenv("BASE_API_URL");
     const char* B_AUTH = getenv("BASIC_AUTH"); const char* UA = getenv("UA");
@@ -498,6 +540,7 @@ int main() {
 
     load_active_number(tokens_arr);
     authenticate_and_fetch_balance(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+    last_token_refresh = time(NULL);
 
     char choice[16];
     while (1) {
@@ -549,7 +592,7 @@ int main() {
                         printf("-------------------------------------------------------\n");
                         printf("              Login ke MyXL\n");
                         printf("-------------------------------------------------------\n");
-                        printf("Masukan nomor XL (Contoh: 6281234567890)\n");
+                        printf("Masukan nomor XL (Contoh: 081234567890 atau 6281234567890)\n");
                         printf("99. Batal\n");
                         printf("-------------------------------------------------------\n");
                         printf("Nomor: "); fflush(stdout);
@@ -559,12 +602,19 @@ int main() {
                             new_num[strcspn(new_num, "\n")] = 0; clean_input_string(new_num);
                             if (strcmp(new_num, "99") == 0 || strlen(new_num) == 0) continue;
                             
-                            printf("\n[*] Mengirim OTP ke %s...\n", new_num);
-                            cJSON* otp_res = request_otp(B_CIAM, B_AUTH, UA, new_num);
+                            // Validasi & normalisasi nomor
+                            char* normalized = normalize_phone_number(new_num);
+                            if (!normalized) {
+                                printf("\n[-] Nomor tidak valid. Harus 10-14 digit, diawali 0 atau 62.\n");
+                                printf("Tekan Enter untuk melanjutkan..."); fflush(stdout); flush_stdin();
+                                continue;
+                            }
+                            printf("\n[*] Mengirim OTP ke %s...\n", normalized);
+                            cJSON* otp_res = request_otp(B_CIAM, B_AUTH, UA, normalized);
                             if (otp_res) cJSON_Delete(otp_res);
 
                             printf("-------------------------------------------------------\n");
-                            printf("Masukan 6-digit OTP yang dikirim ke %s\n", new_num);
+                            printf("Masukan 6-digit OTP yang dikirim ke %s\n", normalized);
                             printf("99. Batal\n");
                             printf("-------------------------------------------------------\n");
                             printf("OTP: "); fflush(stdout);
@@ -575,9 +625,11 @@ int main() {
                                 if (strcmp(otp_code, "99") == 0) {
                                     printf("\n[!] Login dibatalkan.\n");
                                     printf("Tekan Enter untuk melanjutkan..."); fflush(stdout); flush_stdin();
+                                    free(normalized);
+                                    continue;
                                 } else {
                                     printf("\n[*] Verifikasi OTP...\n");
-                                    cJSON* login_res = submit_otp(B_CIAM, B_AUTH, UA, AX_KEY ? AX_KEY : "dummy", new_num, otp_code);
+                                    cJSON* login_res = submit_otp(B_CIAM, B_AUTH, UA, AX_KEY ? AX_KEY : "dummy", normalized, otp_code);
                                     if (login_res && cJSON_GetObjectItem(login_res, "refresh_token")) {
                                         cJSON* rt_node = cJSON_GetObjectItem(login_res, "refresh_token"); const char* rt = (rt_node && cJSON_IsString(rt_node)) ? rt_node->valuestring : "";
                                         cJSON* acc_node = cJSON_GetObjectItem(login_res, "access_token"); const char* acc = (acc_node && cJSON_IsString(acc_node)) ? acc_node->valuestring : "";
@@ -598,7 +650,7 @@ int main() {
                                         }
 
                                         cJSON *new_acct = cJSON_CreateObject();
-                                        cJSON_AddNumberToObject(new_acct, "number", atof(new_num));
+                                        cJSON_AddNumberToObject(new_acct, "number", atof(normalized));
                                         cJSON_AddStringToObject(new_acct, "subscription_type", real_sub_type);
                                         cJSON_AddStringToObject(new_acct, "refresh_token", rt);
                                         cJSON_AddItemToArray(tokens_arr, new_acct);
@@ -612,16 +664,30 @@ int main() {
                                     printf("Tekan Enter untuk melanjutkan..."); fflush(stdout); flush_stdin();
                                 }
                             }
+                            free(normalized);
                         }
                     }
                     else if (strncmp(cmd, "del ", 4) == 0) {
                         int del_idx = atoi(cmd + 4) - 1;
                         if (del_idx >= 0 && del_idx < cJSON_GetArraySize(tokens_arr)) {
-                            cJSON_DeleteItemFromArray(tokens_arr, del_idx); save_tokens(tokens_arr);
-                            if (del_idx == active_account_idx) { active_account_idx = 0; }
-                            else if (del_idx < active_account_idx) { active_account_idx--; }
-                            if (cJSON_GetArraySize(tokens_arr) > 0) authenticate_and_fetch_balance(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
-                            else is_logged_in = 0;
+                            int is_active_deleted = (del_idx == active_account_idx);
+                            cJSON_DeleteItemFromArray(tokens_arr, del_idx);
+                            save_tokens(tokens_arr);
+                            
+                            if (cJSON_GetArraySize(tokens_arr) == 0) {
+                                is_logged_in = 0;
+                                active_account_idx = 0;
+                                active_number = 0;
+                                remove("/etc/engsel/active.number");
+                            } else {
+                                if (is_active_deleted) {
+                                    active_account_idx = 0;
+                                    authenticate_and_fetch_balance(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+                                } else {
+                                    if (del_idx < active_account_idx) active_account_idx--;
+                                    save_active_number();
+                                }
+                            }
                         }
                     }
                     else {
@@ -636,6 +702,8 @@ int main() {
         } 
         else if (strcmp(choice, "2") == 0) {
             if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
+            ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+            if (!is_logged_in) continue;
             
             int goto_main = 0;
             while (1) {
@@ -743,7 +811,6 @@ int main() {
                             char conf[10];
                             if (fgets(conf, sizeof(conf), stdin) && (conf[0] == 'y' || conf[0] == 'Y')) {
                                 printf("[*] Membatalkan langganan paket %s...\n", active_pkgs[del_idx].name);
-                                // PERUBAHAN: tambahkan acc_tok sebagai parameter ke-6
                                 cJSON* u_res = unsubscribe(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok, acc_tok, active_pkgs[del_idx].quota_code, active_pkgs[del_idx].prod_subs_type, active_pkgs[del_idx].prod_domain);
                                 if (u_res && cJSON_GetObjectItem(u_res, "code") && strcmp(cJSON_GetObjectItem(u_res, "code")->valuestring, "000") == 0) {
                                     printf("[+] Berhasil berhenti langganan paket.\n");
@@ -797,6 +864,8 @@ int main() {
         }
         else if (strcmp(choice, "3") == 0) {
             if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
+            ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+            if (!is_logged_in) continue;
             
             FILE *f = fopen("/etc/engsel/hot_data/hot.json", "r");
             if (!f) { printf("\n[-] File hot_data/hot.json tidak ditemukan!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
@@ -897,6 +966,9 @@ int main() {
         }
         else if (strcmp(choice, "4") == 0) {
             if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
+            ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+            if (!is_logged_in) continue;
+            
             char f_code[256]; printf("\nMasukkan Family Code: "); fflush(stdout);
             if (fgets(f_code, sizeof(f_code), stdin) != NULL) {
                 f_code[strcspn(f_code, "\n")] = 0; clean_input_string(f_code);
@@ -1006,6 +1078,8 @@ int main() {
         }
         else if (strcmp(choice, "5") == 0) {
             if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
+            ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+            if (!is_logged_in) continue;
 
             clear_screen();
             printf("=======================================================\n");
@@ -1226,6 +1300,8 @@ int main() {
         }
         else if (strcmp(choice, "00") == 0) {
             if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
+            ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+            if (!is_logged_in) continue;
 
             int goto_main = 0;
             while (1) {
