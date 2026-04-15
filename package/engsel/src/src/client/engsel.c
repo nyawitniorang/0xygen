@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#include <stdint.h>
 #include "../include/client/engsel.h"
 #include "../include/client/http_client.h"
 #include "../include/service/crypto_aes.h"
