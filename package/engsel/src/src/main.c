@@ -368,7 +368,6 @@ void print_package_details(cJSON* d_data, const char* f_code, const char* opt_co
     printf("-------------------------------------------------------\n");
 }
 
-// Helper kecil untuk membaca input integer dengan validasi
 static int read_int_input(const char* prompt) {
     char buf[32];
     printf("%s", prompt); fflush(stdout);
@@ -517,7 +516,6 @@ void handle_payment_menu(const char* B_CIAM, const char* B_API, const char* B_AU
             }
             if (decoy) cJSON_Delete(decoy);
         }
-        // ========== TAMBAHAN BARU: E-WALLET ==========
         else if (strcmp(pay_choice, "4") == 0) {
             printf("\nPilih E-Wallet:\n1. DANA\n2. ShopeePay\n3. GoPay\n4. OVO\nPilihan: ");
             fflush(stdout);
@@ -568,7 +566,6 @@ void handle_payment_menu(const char* B_CIAM, const char* B_API, const char* B_AU
                 cJSON_Delete(buy_res);
             }
         }
-        // ========== TAMBAHAN BARU: QRIS ==========
         else if (strcmp(pay_choice, "5") == 0) {
             int overwrite = price;
             printf("Total amount is %d.\nEnter new amount if you need to overwrite.\nPress enter to ignore: ", price);
@@ -597,6 +594,15 @@ void handle_payment_menu(const char* B_CIAM, const char* B_API, const char* B_AU
                         if (qr && cJSON_IsString(qr)) {
                             printf("\n=== QR Code ===\n");
                             display_qr_terminal(qr->valuestring);
+                            
+                            // Tampilkan link QRIS (seperti di Python)
+                            char* b64 = base64_encode_simple((const unsigned char*)qr->valuestring, strlen(qr->valuestring));
+                            if (b64) {
+                                printf("\nAtau buka link berikut untuk melihat QRIS:\n");
+                                printf("https://ki-ar-kod.netlify.app/?data=%s\n", b64);
+                                free(b64);
+                            }
+                            
                             printf("\nScan QR di atas dengan aplikasi e-wallet/QRIS.\n");
                         }
                         cJSON_Delete(qr_res);
@@ -637,6 +643,87 @@ int main() {
         }
         fclose(fp);
     }
+
+    // ========== PENAMBAHAN: LOGIN AWAL JIKA BELUM ADA AKUN ==========
+    if (cJSON_GetArraySize(tokens_arr) == 0) {
+        clear_screen();
+        printf("=======================================================\n");
+        printf("  Belum ada akun terdaftar. Silakan login terlebih dahulu.\n");
+        printf("=======================================================\n");
+        printf("Masukkan nomor XL (Contoh: 081234567890 atau 6281234567890)\n");
+        printf("99. Batal\n");
+        printf("-------------------------------------------------------\n");
+        printf("Nomor: "); fflush(stdout);
+
+        char new_num[32];
+        if (fgets(new_num, sizeof(new_num), stdin) != NULL) {
+            new_num[strcspn(new_num, "\n")] = 0; clean_input_string(new_num);
+            if (strcmp(new_num, "99") != 0 && strlen(new_num) > 0) {
+                char* normalized = normalize_phone_number(new_num);
+                if (!normalized) {
+                    printf("\n[-] Nomor tidak valid. Harus 10-14 digit, diawali 0 atau 62.\n");
+                    printf("Tekan Enter untuk melanjutkan..."); fflush(stdout); flush_stdin();
+                } else {
+                    printf("\n[*] Mengirim OTP ke %s...\n", normalized);
+                    cJSON* otp_res = request_otp(B_CIAM, B_AUTH, UA, normalized);
+                    if (otp_res) cJSON_Delete(otp_res);
+
+                    printf("-------------------------------------------------------\n");
+                    printf("Masukan 6-digit OTP yang dikirim ke %s\n", normalized);
+                    printf("99. Batal\n");
+                    printf("-------------------------------------------------------\n");
+                    printf("OTP: "); fflush(stdout);
+
+                    char otp_code[10];
+                    if (fgets(otp_code, sizeof(otp_code), stdin) != NULL) {
+                        otp_code[strcspn(otp_code, "\n")] = 0; clean_input_string(otp_code);
+                        if (strcmp(otp_code, "99") != 0) {
+                            printf("\n[*] Verifikasi OTP...\n");
+                            cJSON* login_res = submit_otp(B_CIAM, B_AUTH, UA, AX_KEY ? AX_KEY : "dummy", normalized, otp_code);
+                            if (login_res && cJSON_GetObjectItem(login_res, "refresh_token")) {
+                                cJSON* rt_node = cJSON_GetObjectItem(login_res, "refresh_token"); const char* rt = (rt_node && cJSON_IsString(rt_node)) ? rt_node->valuestring : "";
+                                cJSON* acc_node = cJSON_GetObjectItem(login_res, "access_token"); const char* acc = (acc_node && cJSON_IsString(acc_node)) ? acc_node->valuestring : "";
+                                cJSON* idt_node = cJSON_GetObjectItem(login_res, "id_token"); const char* idt = (idt_node && cJSON_IsString(idt_node)) ? idt_node->valuestring : "";
+
+                                char real_sub_type[32] = "PREPAID";
+                                cJSON* prof_res = get_profile(B_API, API_KEY, XDATA_KEY, X_API_SEC, idt, acc);
+                                if (prof_res) {
+                                    cJSON* p_data = cJSON_GetObjectItem(prof_res, "data");
+                                    if (p_data) {
+                                        cJSON* profile = cJSON_GetObjectItem(p_data, "profile");
+                                        if (profile) {
+                                            cJSON* st = cJSON_GetObjectItem(profile, "subscription_type");
+                                            if (st && cJSON_IsString(st)) strncpy(real_sub_type, st->valuestring, sizeof(real_sub_type)-1);
+                                        }
+                                    }
+                                    cJSON_Delete(prof_res);
+                                }
+
+                                cJSON *new_acct = cJSON_CreateObject();
+                                cJSON_AddNumberToObject(new_acct, "number", atof(normalized));
+                                cJSON_AddStringToObject(new_acct, "subscription_type", real_sub_type);
+                                cJSON_AddStringToObject(new_acct, "refresh_token", rt);
+                                cJSON_AddItemToArray(tokens_arr, new_acct);
+                                save_tokens(tokens_arr);
+                                active_account_idx = 0;
+                                printf("\n[+] LOGIN BERHASIL!\n");
+                            } else {
+                                printf("\n[-] Login Gagal. Pastikan OTP benar dan tidak kedaluwarsa.\n");
+                            }
+                            if (login_res) cJSON_Delete(login_res);
+                        } else {
+                            printf("\n[!] Login dibatalkan.\n");
+                        }
+                    }
+                    free(normalized);
+                }
+            } else {
+                printf("\n[!] Login dibatalkan.\n");
+            }
+        }
+        printf("Tekan Enter untuk melanjutkan..."); fflush(stdout); flush_stdin();
+    }
+    // ========== AKHIR PENAMBAHAN ==========
 
     load_active_number(tokens_arr);
     authenticate_and_fetch_balance(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);

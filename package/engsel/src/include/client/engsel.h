@@ -60,4 +60,7 @@ cJSON* get_qris_code(
 
 void display_qr_terminal(const char* qris_string);
 
+// Helper base64 encode (untuk generate link QRIS)
+char* base64_encode_simple(const unsigned char* data, size_t len);
+
 #endif

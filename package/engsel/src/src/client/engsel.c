@@ -8,7 +8,10 @@
 #include "../include/client/http_client.h"
 #include "../include/service/crypto_aes.h"
 #include "../include/service/crypto_helper.h"
-#include <qrencode.h>   // <--- TAMBAHAN UNTUK QR CODE
+
+#ifndef NO_QRENCODE
+#include <qrencode.h>
+#endif
 
 #define TZ_OFFSET_SEC (7 * 3600)
 
@@ -342,11 +345,9 @@ cJSON* execute_balance_purchase(const char* base, const char* key, const char* x
 
 // ===================================================================
 // TAMBAHAN FUNGSI BARU UNTUK E‑WALLET & QRIS
-// (Diletakkan di akhir file, setelah semua fungsi yang sudah ada)
 // ===================================================================
 
-// Helper base64 sederhana (hanya untuk fallback QR code)
-static char* base64_encode_simple(const unsigned char* data, size_t len) {
+char* base64_encode_simple(const unsigned char* data, size_t len) {
     static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     size_t out_len = 4 * ((len + 2) / 3);
     char* out = malloc(out_len + 1);
@@ -372,7 +373,6 @@ cJSON* execute_ewallet_purchase(
     const char* payment_method, const char* payment_for,
     int overwrite_amount, int token_confirmation_idx)
 {
-    // 1. Ambil payment methods
     printf("[*] 1/3 Mengambil token pembayaran...\n");
     cJSON* pm_p = cJSON_CreateObject();
     cJSON_AddStringToObject(pm_p, "payment_type", "PURCHASE");
@@ -396,7 +396,6 @@ cJSON* execute_ewallet_purchase(
     const char* token_payment = t_pay->valuestring;
     long ts_to_sign = (long)ts_node->valuedouble;
 
-    // 2. Buat payload settlement e-wallet
     printf("[*] 2/3 Membuat transaksi E-Wallet (%s)...\n", payment_method);
     cJSON* set_p = cJSON_CreateObject();
     cJSON* akrab = cJSON_AddObjectToObject(set_p, "akrab");
@@ -442,7 +441,6 @@ cJSON* execute_ewallet_purchase(
     cJSON_AddStringToObject(set_p, "payment_method", payment_method);
     cJSON_AddNumberToObject(set_p, "timestamp", (double)time(NULL));
 
-    // 3. Signature khusus e-wallet
     char payment_targets[512];
     snprintf(payment_targets, sizeof(payment_targets), "%s", opt_code);
     char* custom_sig = make_x_signature_payment(sec, acc, ts_to_sign,
@@ -468,7 +466,6 @@ cJSON* execute_qris_purchase(
 {
     *out_transaction_id = NULL;
 
-    // 1. Payment methods
     printf("[*] 1/3 Mengambil token pembayaran...\n");
     cJSON* pm_p = cJSON_CreateObject();
     cJSON_AddStringToObject(pm_p, "payment_type", "PURCHASE");
@@ -490,7 +487,6 @@ cJSON* execute_qris_purchase(
     const char* token_payment = cJSON_GetObjectItem(data, "token_payment")->valuestring;
     long ts_to_sign = (long)cJSON_GetObjectItem(data, "timestamp")->valuedouble;
 
-    // 2. Payload QRIS
     printf("[*] 2/3 Membuat transaksi QRIS...\n");
     cJSON* set_p = cJSON_CreateObject();
     cJSON* akrab = cJSON_AddObjectToObject(set_p, "akrab");
@@ -551,7 +547,6 @@ cJSON* execute_qris_purchase(
     cJSON_AddStringToObject(set_p, "payment_method", "QRIS");
     cJSON_AddNumberToObject(set_p, "timestamp", (double)time(NULL));
 
-    // Signature QRIS
     char payment_targets[512];
     snprintf(payment_targets, sizeof(payment_targets), "%s", opt_code);
     char* custom_sig = make_x_signature_payment(sec, acc, ts_to_sign,
@@ -607,27 +602,52 @@ void display_qr_terminal(const char* qris_string) {
         free(b64);
     }
 #else
-    QRcode *qr = QRcode_encodeString(qris_string, 0, QR_ECLEVEL_L, QR_MODE_8, 1);
+    // Coba versi 3 dulu (29x29), jika gagal baru otomatis
+    QRcode *qr = QRcode_encodeString(qris_string, 3, QR_ECLEVEL_L, QR_MODE_8, 1);
     if (!qr) {
-        printf("[-] Gagal membuat QR Code.\n");
-        return;
+        qr = QRcode_encodeString(qris_string, 0, QR_ECLEVEL_L, QR_MODE_8, 1);
+        if (!qr) {
+            printf("[-] Gagal membuat QR Code.\n");
+            return;
+        }
     }
 
-    for (int x = 0; x < qr->width + 2; x++) printf("█");
+    int w = qr->width;
+    unsigned char *d = qr->data;
+
+    // Border atas (satu karakter per kolom)
+    for (int x = 0; x < w + 2; x++) printf("█");
     printf("\n");
 
-    for (int y = 0; y < qr->width; y++) {
+    // Cetak dua baris modul sekaligus dengan karakter setengah blok
+    for (int y = 0; y < w; y += 2) {
+        printf("█"); // border kiri
+        for (int x = 0; x < w; x++) {
+            int up = (d[y * w + x] & 1) ? 1 : 0;
+            int down = (y + 1 < w && (d[(y + 1) * w + x] & 1)) ? 1 : 0;
+
+            if (up && down)       printf("█");
+            else if (up && !down) printf("▀");
+            else if (!up && down) printf("▄");
+            else                  printf(" ");
+        }
+        printf("█\n"); // border kanan
+    }
+
+    // Jika tinggi ganjil, cetak baris terakhir
+    if (w % 2 == 1) {
         printf("█");
-        for (int x = 0; x < qr->width; x++) {
-            if (qr->data[y * qr->width + x] & 0x01)
-                printf("██");
+        for (int x = 0; x < w; x++) {
+            if (d[(w - 1) * w + x] & 1)
+                printf("▀");
             else
-                printf("  ");
+                printf(" ");
         }
         printf("█\n");
     }
 
-    for (int x = 0; x < qr->width + 2; x++) printf("█");
+    // Border bawah
+    for (int x = 0; x < w + 2; x++) printf("█");
     printf("\n");
 
     QRcode_free(qr);
