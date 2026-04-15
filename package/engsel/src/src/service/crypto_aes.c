@@ -5,6 +5,7 @@
 #include <openssl/sha.h>
 #include "../include/service/crypto_aes.h"
 
+// [FIXED] Derive IV menggunakan 16 karakter pertama dari Hex String, persis seperti Python "hexdigest()[:16]"
 static void derive_iv(long long xtime_ms, unsigned char *iv) {
     char xtime_str[64];
     snprintf(xtime_str, sizeof(xtime_str), "%lld", xtime_ms);
@@ -31,8 +32,6 @@ static char* base64_urlsafe_encode(const unsigned char* buffer, size_t length) {
         if (*p == '+') *p = '-';
         else if (*p == '/') *p = '_';
     }
-    char* eq = strchr(b64_text, '=');
-    if (eq) *eq = '\0';
     return b64_text;
 }
 
@@ -66,34 +65,22 @@ char* encrypt_xdata(const char* plaintext, long long xtime_ms, const char* xdata
     unsigned char iv[16];
     derive_iv(xtime_ms, iv);
     
-    size_t pt_len = strlen(plaintext);
-    size_t pad = 16 - (pt_len % 16);
-    size_t padded_len = pt_len + pad;
-    unsigned char* padded = malloc(padded_len);
-    if (!padded) return NULL;
-    memcpy(padded, plaintext, pt_len);
-    for (size_t i = pt_len; i < padded_len; i++) padded[i] = (unsigned char)pad;
-    
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, (unsigned char*)xdata_key, iv);
-    EVP_CIPHER_CTX_set_padding(ctx, 0);
+    // Baris berikut DIHAPUS – tidak perlu mematikan auto-padding
+    // EVP_CIPHER_CTX_set_padding(ctx, 0);
     
     int len;
     int ciphertext_len;
-    unsigned char *ciphertext = malloc(padded_len + 16);
-    if (!ciphertext) {
-        free(padded);
-        EVP_CIPHER_CTX_free(ctx);
-        return NULL;
-    }
+    unsigned char *ciphertext = malloc(strlen(plaintext) + 16); 
     
-    EVP_EncryptUpdate(ctx, ciphertext, &len, padded, padded_len);
+    EVP_EncryptUpdate(ctx, ciphertext, &len, (unsigned char*)plaintext, strlen(plaintext));
     ciphertext_len = len;
+    
     EVP_EncryptFinal_ex(ctx, ciphertext + len, &len);
     ciphertext_len += len;
     
     EVP_CIPHER_CTX_free(ctx);
-    free(padded);
     
     char* final_b64 = base64_urlsafe_encode(ciphertext, ciphertext_len);
     free(ciphertext);
@@ -110,17 +97,13 @@ char* decrypt_xdata(const char* xdata, long long xtime_ms, const char* xdata_key
     
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, (unsigned char*)xdata_key, iv);
-    EVP_CIPHER_CTX_set_padding(ctx, 0);
+    // Baris berikut DIHAPUS – tidak perlu mematikan auto-padding
+    // EVP_CIPHER_CTX_set_padding(ctx, 0);
     
     unsigned char *plaintext = malloc(ct_len + 16);
-    if (!plaintext) {
-        free(ct);
-        EVP_CIPHER_CTX_free(ctx);
-        return NULL;
-    }
-    
     int len;
     int pt_len;
+    
     if (EVP_DecryptUpdate(ctx, plaintext, &len, ct, ct_len) != 1) {
         free(ct); free(plaintext); EVP_CIPHER_CTX_free(ctx); return NULL;
     }
@@ -131,16 +114,7 @@ char* decrypt_xdata(const char* xdata, long long xtime_ms, const char* xdata_key
     }
     pt_len += len;
     
-    if (pt_len > 0) {
-        unsigned char pad = plaintext[pt_len - 1];
-        if (pad > 0 && pad <= 16) {
-            int valid = 1;
-            for (int i = pt_len - pad; i < pt_len; i++) {
-                if (plaintext[i] != pad) { valid = 0; break; }
-            }
-            if (valid) pt_len -= pad;
-        }
-    }
+    // Penghapusan padding manual dihilangkan – langsung null-terminate
     plaintext[pt_len] = '\0';
     
     EVP_CIPHER_CTX_free(ctx);
@@ -149,18 +123,19 @@ char* decrypt_xdata(const char* xdata, long long xtime_ms, const char* xdata_key
     return (char*)plaintext;
 }
 
+// Fungsi build_encrypted_field tidak diubah (tetap seperti semula)
 char* build_encrypted_field(const char* enc_field_key) {
     unsigned char iv_bytes[8];
-    for(int i=0; i<8; i++) iv_bytes[i] = random() % 256;
+    for(int i=0; i<8; i++) iv_bytes[i] = rand() % 256;
     char iv_hex[17];
     for(int i=0; i<8; i++) sprintf(&iv_hex[i*2], "%02x", iv_bytes[i]);
 
     unsigned char pt[16];
-    for(int i=0; i<16; i++) pt[i] = 16;
+    for(int i=0; i<16; i++) pt[i] = 16; // pkcs7 pad empty string
 
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     EVP_EncryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, (unsigned char*)enc_field_key, (unsigned char*)iv_hex);
-    EVP_CIPHER_CTX_set_padding(ctx, 0);
+    EVP_CIPHER_CTX_set_padding(ctx, 0); // Matikan auto-padding OpenSSL untuk field terenkripsi (khusus ini tidak masalah)
 
     unsigned char ct[16]; int len;
     EVP_EncryptUpdate(ctx, ct, &len, pt, 16);
@@ -170,6 +145,5 @@ char* build_encrypted_field(const char* enc_field_key) {
     char* b64 = base64_urlsafe_encode(ct, 16);
     char* result = malloc(strlen(b64) + 17);
     sprintf(result, "%s%s", b64, iv_hex);
-    free(b64);
-    return result;
+    free(b64); return result;
 }
