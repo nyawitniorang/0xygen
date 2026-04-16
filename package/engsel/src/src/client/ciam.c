@@ -49,7 +49,6 @@ static char* md5_hex(const char *input) {
     return hex;
 }
 
-// Fungsi baru: timestamp dengan milidetik dan offset timezone
 static char* get_timestamp_with_ms(int offset_seconds) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -74,12 +73,10 @@ static char* get_timestamp_header(void) {
     return get_timestamp_with_ms(TZ_OFFSET_SEC - 300);
 }
 
-// Fingerprint menggunakan data dummy (seperti Python)
 static char* generate_ax_fingerprint(void) {
     const char* key_str = getenv("AX_FP_KEY");
     if (!key_str) return strdup("dummy");
 
-    // manufacturer dan model acak seperti Python
     int rand1 = (random() % 9000) + 1000;
     int rand2 = (random() % 9000) + 1000;
 
@@ -115,7 +112,6 @@ static char* generate_ax_fingerprint(void) {
     return b64;
 }
 
-// Device ID = MD5 dari fingerprint yang sudah di-base64
 static char* generate_ax_device_id(void) {
     char* fp = generate_ax_fingerprint();
     char* dev_id = md5_hex(fp);
@@ -150,12 +146,9 @@ static char* generate_ax_api_signature(const char* ts_for_sign, const char* cont
     return b64;
 }
 
-// Fungsi extend_session baru
 static char* extend_session(const char* base_ciam_url, const char* basic_auth, const char* ua, const char* subscriber_id) {
-    // Base64 encode subscriber_id
     char b64_subscriber_id[256];
     EVP_EncodeBlock((unsigned char*)b64_subscriber_id, (unsigned char*)subscriber_id, strlen(subscriber_id));
-    // Hapus newline jika ada
     char* nl = strchr(b64_subscriber_id, '\n');
     if (nl) *nl = '\0';
 
@@ -257,14 +250,13 @@ cJSON* get_new_token(const char* base_ciam_url, const char* basic_auth, const ch
                 if (err_desc && cJSON_IsString(err_desc) && strstr(err_desc->valuestring, "Session not active")) {
                     cJSON_Delete(err_json);
                     free_http_response(response);
-                    // Lakukan extend_session
                     if (subscriber_id && strlen(subscriber_id) > 0) {
                         char* exchange_code = extend_session(base_ciam_url, basic_auth, ua, subscriber_id);
                         if (exchange_code) {
                             const char* ax_key = getenv("AX_API_SIG_KEY");
                             cJSON* new_tokens = submit_otp(base_ciam_url, basic_auth, ua,
                                                            ax_key ? ax_key : "dummy",
-                                                           subscriber_id, exchange_code);
+                                                           "DEVICEID", subscriber_id, exchange_code);
                             free(exchange_code);
                             free(fp); free(dev_id);
                             return new_tokens;
@@ -275,7 +267,6 @@ cJSON* get_new_token(const char* base_ciam_url, const char* basic_auth, const ch
                 }
             }
         }
-        // Jika tidak ada error 400 khusus, parse seperti biasa
         cJSON* result = NULL;
         if (response->body) result = cJSON_Parse(response->body);
         free_http_response(response);
@@ -328,15 +319,26 @@ cJSON* request_otp(const char* base_ciam_url, const char* basic_auth, const char
 }
 
 cJSON* submit_otp(const char* base_ciam_url, const char* basic_auth, const char* ua,
-                  const char* ax_api_sig_key, const char* number, const char* otp) {
+                  const char* ax_api_sig_key, const char* contact_type, const char* contact, const char* code) {
     char url[512];
     snprintf(url, sizeof(url), "%s/realms/xl-ciam/protocol/openid-connect/token", base_ciam_url);
+
+    char final_contact[512];
+    if (strcmp(contact_type, "DEVICEID") == 0) {
+        EVP_EncodeBlock((unsigned char*)final_contact, (unsigned char*)contact, strlen(contact));
+        char* nl = strchr(final_contact, '\n');
+        if (nl) *nl = '\0';
+    } else {
+        strncpy(final_contact, contact, sizeof(final_contact)-1);
+    }
+
     char payload[1024];
     snprintf(payload, sizeof(payload),
-             "contactType=SMS&code=%s&grant_type=password&contact=%s&scope=openid", otp, number);
+             "contactType=%s&code=%s&grant_type=password&contact=%s&scope=openid",
+             contact_type, code, final_contact);
 
     char* ts_for_sign = get_ts_for_signature();
-    char* signature = generate_ax_api_signature(ts_for_sign, number, otp, "SMS", ax_api_sig_key);
+    char* signature = generate_ax_api_signature(ts_for_sign, final_contact, code, contact_type, ax_api_sig_key);
 
     char auth_hdr[512];
     snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Basic %s", basic_auth);
