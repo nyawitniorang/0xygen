@@ -316,6 +316,21 @@ cJSON* execute_balance_purchase(const char* base, const char* key, const char* x
     cJSON* add_data = cJSON_AddObjectToObject(set_p, "additional_data");
     cJSON_AddNumberToObject(add_data, "original_price", price);
     cJSON_AddNumberToObject(add_data, "tax", 0);
+    // Tambahan field yang ada di Python
+    cJSON_AddStringToObject(add_data, "balance_type", "PREPAID_BALANCE");
+    cJSON_AddBoolToObject(add_data, "is_spend_limit", 0);
+    cJSON_AddBoolToObject(add_data, "is_spend_limit_temporary", 0);
+    cJSON_AddNumberToObject(add_data, "spend_limit_amount", 0);
+    cJSON_AddStringToObject(add_data, "migration_type", "");
+    cJSON_AddStringToObject(add_data, "mission_id", "");
+    cJSON_AddNumberToObject(add_data, "quota_bonus", 0);
+    cJSON_AddStringToObject(add_data, "cashtag", "");
+    cJSON_AddBoolToObject(add_data, "is_family_plan", 0);
+    cJSON* combo_arr = cJSON_AddArrayToObject(add_data, "combo_details");
+    cJSON_AddBoolToObject(add_data, "is_switch_plan", 0);
+    cJSON_AddNumberToObject(add_data, "discount_recurring", 0);
+    cJSON_AddBoolToObject(add_data, "has_bonus", 0);
+    cJSON_AddNumberToObject(add_data, "discount_promo", 0);
 
     cJSON* items_arr = cJSON_AddArrayToObject(set_p, "items");
     cJSON* item1 = cJSON_CreateObject();

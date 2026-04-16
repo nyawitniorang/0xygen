@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <curl/curl.h>
+#include <unistd.h>
 #include "../include/client/http_client.h"
 
 static CURL *shared_curl = NULL;
@@ -23,9 +24,6 @@ static CURL* get_curl_handle() {
     return shared_curl;
 }
 
-// FIX: Terapkan SSL options yang benar ke handle curl.
-// Di OpenWrt, CA bundle ada di /etc/ssl/cert.pem setelah install ca-bundle.
-// CURLOPT_FOLLOWLOCATION diperlukan karena server CIAM bisa redirect.
 static void apply_common_opts(CURL* curl, struct MemoryStruct* chunk) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)chunk);
@@ -33,13 +31,16 @@ static void apply_common_opts(CURL* curl, struct MemoryStruct* chunk) {
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
 
-    // SSL: verifikasi peer & host aktif (aman)
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
 
-    // Path CA bundle OpenWrt 25.x (setelah: apk add ca-bundle)
-    // Fallback ke /etc/ssl/certs/ca-certificates.crt jika tidak ada
-    curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/cert.pem");
+    // Coba beberapa lokasi umum CA bundle di OpenWrt
+    if (access("/etc/ssl/cert.pem", R_OK) == 0) {
+        curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/cert.pem");
+    } else if (access("/etc/ssl/certs/ca-certificates.crt", R_OK) == 0) {
+        curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/certs/ca-certificates.crt");
+    }
+    // Jika tidak ada, fallback ke default curl (mungkin pakai bundle bawaan)
 }
 
 struct HttpResponse* http_post(const char* url, const char* headers[], int header_count, const char* payload) {

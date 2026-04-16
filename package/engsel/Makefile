@@ -13,7 +13,7 @@ define Package/engsel
   TITLE:=engsel - Klien CLI untuk penyedia layanan internet seluler tertentu di Indonesia
   URL:=https://github.com/moonspacelite/engsel
   MAINTAINER:=0x
-  DEPENDS:=+libcurl +libopenssl +libpthread +libqrencode
+  DEPENDS:=+libcurl +libopenssl +libpthread +libqrencode +ca-bundle
 endef
 
 define Package/engsel/description

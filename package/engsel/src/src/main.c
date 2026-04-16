@@ -11,6 +11,7 @@
 int active_account_idx = 0;
 double active_number = 0;
 char active_subs_type[32] = "UNKNOWN";
+char active_subscriber_id[64] = "";
 char id_tok[4096] = {0};
 char acc_tok[4096] = {0};
 int is_logged_in = 0;
@@ -111,21 +112,26 @@ void authenticate_and_fetch_balance(cJSON* tokens_arr, const char* B_CIAM, const
     cJSON *rt_item = cJSON_GetObjectItem(account, "refresh_token");
     cJSON *num_item = cJSON_GetObjectItem(account, "number");
     cJSON *sub_item = cJSON_GetObjectItem(account, "subscription_type");
+    cJSON *sid_item = cJSON_GetObjectItem(account, "subscriber_id");
     
     if (num_item) active_number = num_item->valuedouble;
     if (sub_item) strncpy(active_subs_type, sub_item->valuestring, sizeof(active_subs_type) - 1);
+    if (sid_item && cJSON_IsString(sid_item)) strncpy(active_subscriber_id, sid_item->valuestring, sizeof(active_subscriber_id) - 1);
+    else active_subscriber_id[0] = '\0';
     save_active_number(); 
 
     if (rt_item && rt_item->valuestring) {
         printf("\n[*] Autentikasi akun %.0f...\n", active_number);
-        cJSON* auth_response = get_new_token(B_CIAM, B_AUTH, UA, rt_item->valuestring);
+        cJSON* auth_response = get_new_token(B_CIAM, B_AUTH, UA, rt_item->valuestring, active_subscriber_id);
         if (auth_response) {
             cJSON* id = cJSON_GetObjectItem(auth_response, "id_token"); 
             cJSON* acc = cJSON_GetObjectItem(auth_response, "access_token");
             cJSON* new_rt = cJSON_GetObjectItem(auth_response, "refresh_token");
             
             if (id && acc) {
-                if(id && cJSON_IsString(id)) { strncpy(id_tok, id->valuestring, sizeof(id_tok)-1); id_tok[sizeof(id_tok)-1]='\0'; } if(acc && cJSON_IsString(acc)) { strncpy(acc_tok, acc->valuestring, sizeof(acc_tok)-1); acc_tok[sizeof(acc_tok)-1]='\0'; } is_logged_in = 1;
+                if(id && cJSON_IsString(id)) { strncpy(id_tok, id->valuestring, sizeof(id_tok)-1); id_tok[sizeof(id_tok)-1]='\0'; }
+                if(acc && cJSON_IsString(acc)) { strncpy(acc_tok, acc->valuestring, sizeof(acc_tok)-1); acc_tok[sizeof(acc_tok)-1]='\0'; }
+                is_logged_in = 1;
                 
                 if (new_rt && cJSON_IsString(new_rt)) { cJSON_ReplaceItemInObject(account, "refresh_token", cJSON_CreateString(new_rt->valuestring)); }
                 
@@ -141,6 +147,13 @@ void authenticate_and_fetch_balance(cJSON* tokens_arr, const char* B_CIAM, const
                                 cJSON* old_sub = cJSON_GetObjectItem(account, "subscription_type");
                                 if (old_sub) cJSON_ReplaceItemInObject(account, "subscription_type", cJSON_CreateString(active_subs_type));
                                 else cJSON_AddStringToObject(account, "subscription_type", active_subs_type);
+                            }
+                            cJSON* sid = cJSON_GetObjectItem(profile, "subscriber_id");
+                            if (sid && cJSON_IsString(sid)) {
+                                strncpy(active_subscriber_id, sid->valuestring, sizeof(active_subscriber_id)-1);
+                                cJSON* old_sid = cJSON_GetObjectItem(account, "subscriber_id");
+                                if (old_sid) cJSON_ReplaceItemInObject(account, "subscriber_id", cJSON_CreateString(active_subscriber_id));
+                                else cJSON_AddStringToObject(account, "subscriber_id", active_subscriber_id);
                             }
                         }
                     }
@@ -686,6 +699,7 @@ int main() {
                                 cJSON* idt_node = cJSON_GetObjectItem(login_res, "id_token"); const char* idt = (idt_node && cJSON_IsString(idt_node)) ? idt_node->valuestring : "";
 
                                 char real_sub_type[32] = "PREPAID";
+                                char real_sub_id[64] = "";
                                 cJSON* prof_res = get_profile(B_API, API_KEY, XDATA_KEY, X_API_SEC, idt, acc);
                                 if (prof_res) {
                                     cJSON* p_data = cJSON_GetObjectItem(prof_res, "data");
@@ -694,6 +708,8 @@ int main() {
                                         if (profile) {
                                             cJSON* st = cJSON_GetObjectItem(profile, "subscription_type");
                                             if (st && cJSON_IsString(st)) strncpy(real_sub_type, st->valuestring, sizeof(real_sub_type)-1);
+                                            cJSON* sid = cJSON_GetObjectItem(profile, "subscriber_id");
+                                            if (sid && cJSON_IsString(sid)) strncpy(real_sub_id, sid->valuestring, sizeof(real_sub_id)-1);
                                         }
                                     }
                                     cJSON_Delete(prof_res);
@@ -702,6 +718,7 @@ int main() {
                                 cJSON *new_acct = cJSON_CreateObject();
                                 cJSON_AddNumberToObject(new_acct, "number", atof(normalized));
                                 cJSON_AddStringToObject(new_acct, "subscription_type", real_sub_type);
+                                if (strlen(real_sub_id) > 0) cJSON_AddStringToObject(new_acct, "subscriber_id", real_sub_id);
                                 cJSON_AddStringToObject(new_acct, "refresh_token", rt);
                                 cJSON_AddItemToArray(tokens_arr, new_acct);
                                 save_tokens(tokens_arr);
@@ -822,6 +839,7 @@ int main() {
                                         cJSON* idt_node = cJSON_GetObjectItem(login_res, "id_token"); const char* idt = (idt_node && cJSON_IsString(idt_node)) ? idt_node->valuestring : "";
 
                                         char real_sub_type[32] = "PREPAID";
+                                        char real_sub_id[64] = "";
                                         cJSON* prof_res = get_profile(B_API, API_KEY, XDATA_KEY, X_API_SEC, idt, acc);
                                         if (prof_res) {
                                             cJSON* p_data = cJSON_GetObjectItem(prof_res, "data");
@@ -830,6 +848,8 @@ int main() {
                                                 if (profile) {
                                                     cJSON* st = cJSON_GetObjectItem(profile, "subscription_type");
                                                     if (st && cJSON_IsString(st)) strncpy(real_sub_type, st->valuestring, sizeof(real_sub_type)-1);
+                                                    cJSON* sid = cJSON_GetObjectItem(profile, "subscriber_id");
+                                                    if (sid && cJSON_IsString(sid)) strncpy(real_sub_id, sid->valuestring, sizeof(real_sub_id)-1);
                                                 }
                                             }
                                             cJSON_Delete(prof_res);
@@ -838,6 +858,7 @@ int main() {
                                         cJSON *new_acct = cJSON_CreateObject();
                                         cJSON_AddNumberToObject(new_acct, "number", atof(normalized));
                                         cJSON_AddStringToObject(new_acct, "subscription_type", real_sub_type);
+                                        if (strlen(real_sub_id) > 0) cJSON_AddStringToObject(new_acct, "subscriber_id", real_sub_id);
                                         cJSON_AddStringToObject(new_acct, "refresh_token", rt);
                                         cJSON_AddItemToArray(tokens_arr, new_acct);
                                         save_tokens(tokens_arr); active_account_idx = cJSON_GetArraySize(tokens_arr) - 1;
