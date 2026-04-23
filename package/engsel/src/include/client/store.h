@@ -20,4 +20,20 @@ cJSON* store_get_redeemables(const char* base, const char* api_key, const char* 
 cJSON* store_get_notifications(const char* base, const char* api_key, const char* xdata_key,
                                const char* sec, const char* id_token);
 
+/* dashboard_segments Python: POST dashboard/api/v8/segments.
+   Response berisi .data.notification.data[] yang kita pakai di menu notif. */
+cJSON* store_dashboard_segments(const char* base, const char* api_key, const char* xdata_key,
+                                const char* sec, const char* id_token,
+                                const char* access_token);
+
+/* Ambil detail notifikasi (mark-as-read implicit). */
+cJSON* store_get_notification_detail(const char* base, const char* api_key,
+                                     const char* xdata_key, const char* sec,
+                                     const char* id_token, const char* notification_id);
+
+/* PUK validasi (registration.validate_puk Python). */
+cJSON* store_validate_puk(const char* base, const char* api_key,
+                          const char* xdata_key, const char* sec,
+                          const char* msisdn, const char* puk);
+
 #endif

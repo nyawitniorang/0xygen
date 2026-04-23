@@ -13,6 +13,8 @@
 #include "../include/client/http_client.h"
 #include "../include/menu/features.h"
 #include "../include/menu/history.h"
+#include "../include/menu/store_browse.h"
+#include "../include/menu/purchase_flow.h"
 
 int active_account_idx = 0;
 double active_number = 0;
@@ -21,6 +23,10 @@ char active_subscriber_id[64] = "";
 char id_tok[4096] = {0};
 char acc_tok[4096] = {0};
 int is_logged_in = 0;
+
+/* Diglobalkan agar helper lintas modul (store/redeem/menu-5) bisa memakai
+ * handle_payment_menu tanpa perlu param tokens_arr yang ditanam dalam. */
+cJSON* g_tokens_arr = NULL;
 
 double cached_balance = 0;
 char cached_exp[32] = "--";
@@ -643,6 +649,61 @@ void handle_payment_menu(const char* B_CIAM, const char* B_API, const char* B_AU
     }
 }
 
+int purchase_flow_by_option_code(const char* option_code) {
+    if (!option_code || !*option_code) {
+        printf("[-] Option code kosong.\n"); return 0;
+    }
+    if (!is_logged_in) {
+        printf("[-] Anda harus login.\n"); return 0;
+    }
+    const char* B_CIAM     = getenv("BASE_CIAM_URL");
+    const char* B_API      = getenv("BASE_API_URL");
+    const char* B_AUTH     = getenv("BASIC_AUTH");
+    const char* UA_        = getenv("UA");
+    const char* API_KEY    = getenv("API_KEY");
+    const char* XDATA_KEY  = getenv("XDATA_KEY");
+    const char* X_API_SEC  = getenv("X_API_BASE_SECRET");
+    const char* ENC_FIELD  = getenv("ENCRYPTED_FIELD_KEY");
+    if (!B_API || !API_KEY || !XDATA_KEY || !X_API_SEC) {
+        printf("[-] Env tidak lengkap.\n"); return 0;
+    }
+
+    printf("\n[*] Mengambil detail untuk transaksi...\n");
+    cJSON* d_res = get_package_detail(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok, option_code);
+    if (!d_res) { printf("[-] Gagal mengambil detail paket.\n"); return 0; }
+
+    cJSON* d_data = cJSON_GetObjectItemCaseSensitive(d_res, "data");
+    if (!d_data) {
+        printf("[-] Response tidak memiliki data.\n");
+        char* out = cJSON_Print(d_res); if (out) { printf("%s\n", out); free(out); }
+        cJSON_Delete(d_res);
+        return 0;
+    }
+    cJSON* p_opt = cJSON_GetObjectItemCaseSensitive(d_data, "package_option");
+    cJSON* p_fam = cJSON_GetObjectItemCaseSensitive(d_data, "package_family");
+    if (!p_opt) { printf("[-] Tidak ada package_option.\n"); cJSON_Delete(d_res); return 0; }
+
+    cJSON* price_item = cJSON_GetObjectItemCaseSensitive(p_opt, "price");
+    int price = 0;
+    if (price_item) price = cJSON_IsNumber(price_item) ? price_item->valueint
+                                                       : (price_item->valuestring ? atoi(price_item->valuestring) : 0);
+    const char* name = json_get_str(p_opt, "name", "");
+    const char* conf = json_get_str(d_data, "token_confirmation", "");
+    const char* p_for = p_fam ? json_get_str(p_fam, "payment_for", "BUY_PACKAGE") : "BUY_PACKAGE";
+    const char* f_code = p_fam ? json_get_str(p_fam, "package_family_code", "") : "";
+
+    print_package_details(d_data, f_code, option_code, B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
+
+    int goto_main = 0;
+    handle_payment_menu(B_CIAM, B_API, B_AUTH, UA_,
+                        API_KEY, XDATA_KEY, X_API_SEC, ENC_FIELD,
+                        g_tokens_arr, option_code, price, name, conf, p_for,
+                        NULL, &goto_main);
+
+    cJSON_Delete(d_res);
+    return goto_main;
+}
+
 int main(void) {
     http_client_init();
     atexit(http_client_cleanup);
@@ -656,13 +717,14 @@ int main(void) {
     if (!B_CIAM || !B_API || !API_KEY || !XDATA_KEY || !X_API_SEC || !ENC_FIELD_KEY) { printf("[-] Kredensial tidak lengkap di .env!\n"); return 1; }
 
     cJSON *tokens_arr = cJSON_CreateArray();
+    g_tokens_arr = tokens_arr;
     {
         char *json_data = file_read_all("/etc/engsel/refresh-tokens.json", NULL);
         if (json_data) {
             sanitize_json_string(json_data);
             cJSON* parsed = cJSON_Parse(json_data);
             free(json_data);
-            if (parsed) { cJSON_Delete(tokens_arr); tokens_arr = parsed; }
+            if (parsed) { cJSON_Delete(tokens_arr); tokens_arr = parsed; g_tokens_arr = tokens_arr; }
         }
     }
 
@@ -775,8 +837,11 @@ int main(void) {
         printf("3. Beli Paket HOT 🔥\n");
         printf("4. Beli Paket Berdasarkan Family Code\n");
         printf("5. Beli Semua Paket di Family Code (loop)\n");
-        printf("6. Fitur Lanjutan (Circle / Family Plan / Store)\n");
+        printf("6. Fitur Lanjutan (Circle / Family Plan)\n");
         printf("7. Riwayat Transaksi\n");
+        printf("8. Beli by Option Code (manual)\n");
+        printf("9. Store Browse (Family List / Search / Segments / Redeem)\n");
+        printf("N. Notifikasi\n");
         printf("R. Registrasi Kartu (Dukcapil NIK+KK)\n");
         printf("V. Validate MSISDN\n");
         printf("00. Bookmark Paket\n");
@@ -1528,6 +1593,35 @@ int main(void) {
             ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
             if (!is_logged_in) continue;
             show_transaction_history_menu(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
+        }
+        else if (strcmp(choice, "8") == 0) {
+            if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
+            ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+            if (!is_logged_in) continue;
+            show_buy_by_option_code();
+        }
+        else if (strcmp(choice, "9") == 0) {
+            if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
+            ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+            if (!is_logged_in) continue;
+            while (1) {
+                printf("\n--- Store Browse ---\n");
+                printf("1. Family List\n2. Search Packages (v9)\n3. Segments (banner)\n4. Redeemables\n00. Kembali\nPilih: ");
+                fflush(stdout);
+                char s[8]; if (!fgets(s, sizeof(s), stdin)) break;
+                s[strcspn(s, "\n")] = 0;
+                if (strcmp(s, "00") == 0) break;
+                else if (strcmp(s, "1") == 0) show_store_family_list_browse(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok, active_subs_type);
+                else if (strcmp(s, "2") == 0) show_store_packages_browse(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok, active_subs_type);
+                else if (strcmp(s, "3") == 0) show_store_segments_browse(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
+                else if (strcmp(s, "4") == 0) show_redeemables_browse(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
+            }
+        }
+        else if (strcmp(choice, "n") == 0 || strcmp(choice, "N") == 0) {
+            if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
+            ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+            if (!is_logged_in) continue;
+            show_notification_browse(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
         }
         else if (strcmp(choice, "r") == 0 || strcmp(choice, "R") == 0) {
             if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }

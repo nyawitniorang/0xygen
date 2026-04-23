@@ -84,3 +84,42 @@ cJSON* store_get_notifications(const char* base, const char* api_key, const char
     cJSON_Delete(p);
     return r;
 }
+
+cJSON* store_dashboard_segments(const char* base, const char* api_key,
+                                const char* xdata_key, const char* sec,
+                                const char* id_token, const char* access_token) {
+    cJSON* p = cJSON_CreateObject();
+    cJSON_AddStringToObject(p, "access_token", access_token ? access_token : "");
+    cJSON* r = post(base, api_key, xdata_key, sec,
+                    "dashboard/api/v8/segments", p, id_token);
+    cJSON_Delete(p);
+    return r;
+}
+
+cJSON* store_get_notification_detail(const char* base, const char* api_key,
+                                     const char* xdata_key, const char* sec,
+                                     const char* id_token, const char* notification_id) {
+    cJSON* p = cJSON_CreateObject();
+    cJSON_AddBoolToObject(p, "is_enterprise", 0);
+    cJSON_AddStringToObject(p, "lang", "en");
+    cJSON_AddStringToObject(p, "notification_id", notification_id ? notification_id : "");
+    cJSON* r = post(base, api_key, xdata_key, sec,
+                    "api/v8/notification/detail", p, id_token);
+    cJSON_Delete(p);
+    return r;
+}
+
+cJSON* store_validate_puk(const char* base, const char* api_key,
+                          const char* xdata_key, const char* sec,
+                          const char* msisdn, const char* puk) {
+    cJSON* p = cJSON_CreateObject();
+    cJSON_AddBoolToObject(p, "is_enterprise", 0);
+    cJSON_AddStringToObject(p, "puk", puk ? puk : "");
+    cJSON_AddBoolToObject(p, "is_enc", 0);
+    cJSON_AddStringToObject(p, "msisdn", msisdn ? msisdn : "");
+    cJSON_AddStringToObject(p, "lang", "en");
+    cJSON* r = post(base, api_key, xdata_key, sec,
+                    "api/v8/infos/validate-puk", p, "");
+    cJSON_Delete(p);
+    return r;
+}
