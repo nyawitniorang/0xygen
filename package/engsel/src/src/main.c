@@ -11,6 +11,7 @@
 #include "../include/client/ciam.h"
 #include "../include/client/engsel.h"
 #include "../include/client/http_client.h"
+#include "../include/menu/features.h"
 
 int active_account_idx = 0;
 double active_number = 0;
@@ -773,6 +774,7 @@ int main(void) {
         printf("3. Beli Paket HOT 🔥\n");
         printf("4. Beli Paket Berdasarkan Family Code\n");
         printf("5. Beli Semua Paket di Family Code (loop)\n");
+        printf("6. Fitur Lanjutan (Circle / Family Plan / Store)\n");
         printf("00. Bookmark Paket\n");
         printf("99. Tutup aplikasi\n");
         printf("-------------------------------------------------------\n");
@@ -1508,6 +1510,12 @@ int main(void) {
             printf("Loop selesai. Total transaksi berhasil: %d\n", success_count);
             printf("=======================================================\n");
             printf("Tekan Enter untuk kembali ke menu utama..."); fflush(stdout); flush_stdin();
+        }
+        else if (strcmp(choice, "6") == 0) {
+            if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
+            ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
+            if (!is_logged_in) continue;
+            show_features_menu(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok, acc_tok);
         }
         else if (strcmp(choice, "00") == 0) {
             if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
