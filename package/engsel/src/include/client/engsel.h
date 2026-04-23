@@ -63,4 +63,29 @@ void display_qr_terminal(const char* qris_string);
 // Helper base64 encode (untuk generate link QRIS)
 char* base64_encode_simple(const unsigned char* data, size_t len);
 
+// ========== TAMBAHAN BARU (Riwayat, Registrasi, Validate) ==========
+
+/* Riwayat transaksi (POST payments/api/v8/transaction-history).
+   Response: { status: "SUCCESS", data: { list: [ {title, price, timestamp,
+   payment_method_label, status, payment_status, ...} ] } } */
+cJSON* get_transaction_history(const char* base_url, const char* api_key,
+                               const char* xdata_key, const char* api_secret,
+                               const char* id_token);
+
+/* Pending payment list. */
+cJSON* get_pending_payments(const char* base_url, const char* api_key,
+                            const char* xdata_key, const char* api_secret,
+                            const char* id_token);
+
+/* Registrasi SIM ke Dukcapil (NIK+KK) untuk menu R. */
+cJSON* dukcapil_register(const char* base_url, const char* api_key,
+                        const char* xdata_key, const char* api_secret,
+                        const char* id_token,
+                        const char* msisdn, const char* kk, const char* nik);
+
+/* MSISDN validasi standalone untuk menu V. */
+cJSON* validate_msisdn(const char* base_url, const char* api_key,
+                       const char* xdata_key, const char* api_secret,
+                       const char* id_token, const char* msisdn);
+
 #endif
