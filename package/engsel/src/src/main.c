@@ -1515,7 +1515,9 @@ int main(void) {
             if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }
             ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
             if (!is_logged_in) continue;
-            show_features_menu(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok, acc_tok);
+            char my_msisdn[32]; snprintf(my_msisdn, sizeof(my_msisdn), "%.0f", active_number);
+            show_features_menu(B_API, API_KEY, XDATA_KEY, X_API_SEC, ENC_FIELD_KEY,
+                               id_tok, acc_tok, my_msisdn);
         }
         else if (strcmp(choice, "00") == 0) {
             if (!is_logged_in) { printf("\n[-] Anda harus login terlebih dahulu!\nTekan Enter..."); fflush(stdout); flush_stdin(); continue; }

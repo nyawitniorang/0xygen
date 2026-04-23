@@ -4,7 +4,6 @@
 #include "../include/client/engsel.h"
 #include "../include/service/crypto_aes.h"
 
-/* Helper internal. send_api_request (engsel.c) menangani enkripsi xdata + HMAC. */
 static cJSON* post(const char* base, const char* key, const char* xdata,
                    const char* sec, const char* path, cJSON* payload, const char* id_token) {
     return send_api_request(base, key, xdata, sec, path, payload, id_token, "POST", NULL);
@@ -32,8 +31,9 @@ cJSON* circle_get_group_members(const char* base, const char* api_key, const cha
 }
 
 cJSON* circle_validate_member(const char* base, const char* api_key, const char* xdata_key,
-                              const char* sec, const char* id_token, const char* msisdn) {
-    char* enc_msisdn = encrypt_circle_msisdn(api_key, msisdn);
+                              const char* sec, const char* enc_field_key,
+                              const char* id_token, const char* msisdn) {
+    char* enc_msisdn = encrypt_circle_msisdn(msisdn, enc_field_key);
     cJSON* p = cJSON_CreateObject();
     cJSON_AddStringToObject(p, "msisdn", enc_msisdn ? enc_msisdn : "");
     cJSON_AddBoolToObject(p, "is_enterprise", 0);
@@ -45,10 +45,11 @@ cJSON* circle_validate_member(const char* base, const char* api_key, const char*
 }
 
 cJSON* circle_invite_member(const char* base, const char* api_key, const char* xdata_key,
-                            const char* sec, const char* id_token, const char* access_token,
+                            const char* sec, const char* enc_field_key,
+                            const char* id_token, const char* access_token,
                             const char* msisdn, const char* name,
                             const char* group_id, const char* member_id_parent) {
-    char* enc_msisdn = encrypt_circle_msisdn(api_key, msisdn);
+    char* enc_msisdn = encrypt_circle_msisdn(msisdn, enc_field_key);
     cJSON* p = cJSON_CreateObject();
     cJSON_AddStringToObject(p, "access_token", access_token ? access_token : "");
     cJSON_AddStringToObject(p, "group_id", group_id ? group_id : "");
@@ -98,10 +99,11 @@ cJSON* circle_accept_invitation(const char* base, const char* api_key, const cha
 }
 
 cJSON* circle_create_group(const char* base, const char* api_key, const char* xdata_key,
-                           const char* sec, const char* id_token, const char* access_token,
+                           const char* sec, const char* enc_field_key,
+                           const char* id_token, const char* access_token,
                            const char* parent_name, const char* group_name,
                            const char* member_msisdn, const char* member_name) {
-    char* enc_msisdn = encrypt_circle_msisdn(api_key, member_msisdn);
+    char* enc_msisdn = encrypt_circle_msisdn(member_msisdn, enc_field_key);
     cJSON* p = cJSON_CreateObject();
     cJSON_AddStringToObject(p, "access_token", access_token ? access_token : "");
     cJSON_AddStringToObject(p, "parent_name", parent_name ? parent_name : "");
