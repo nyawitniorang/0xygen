@@ -697,3 +697,68 @@ void display_qr_terminal(const char* qris_string) {
     QRcode_free(qr);
 #endif
 }
+
+/* ============================================================================
+ * Riwayat, Pending, Dukcapil, Validate (paritas Python)
+ * ========================================================================= */
+
+cJSON* get_transaction_history(const char* base_url, const char* api_key,
+                               const char* xdata_key, const char* api_secret,
+                               const char* id_token) {
+    cJSON* p = cJSON_CreateObject();
+    cJSON_AddBoolToObject(p, "is_enterprise", 0);
+    cJSON_AddStringToObject(p, "lang", "en");
+    cJSON* r = send_api_request(base_url, api_key, xdata_key, api_secret,
+                                "payments/api/v8/transaction-history", p,
+                                id_token, "POST", NULL);
+    cJSON_Delete(p);
+    return r;
+}
+
+cJSON* get_pending_payments(const char* base_url, const char* api_key,
+                            const char* xdata_key, const char* api_secret,
+                            const char* id_token) {
+    cJSON* p = cJSON_CreateObject();
+    cJSON_AddBoolToObject(p, "is_enterprise", 0);
+    cJSON_AddStringToObject(p, "lang", "en");
+    cJSON* r = send_api_request(base_url, api_key, xdata_key, api_secret,
+                                "payments/api/v8/pending-payments", p,
+                                id_token, "POST", NULL);
+    cJSON_Delete(p);
+    return r;
+}
+
+cJSON* dukcapil_register(const char* base_url, const char* api_key,
+                        const char* xdata_key, const char* api_secret,
+                        const char* id_token,
+                        const char* msisdn, const char* kk, const char* nik) {
+    cJSON* p = cJSON_CreateObject();
+    cJSON_AddStringToObject(p, "msisdn", msisdn ? msisdn : "");
+    cJSON_AddStringToObject(p, "kk", kk ? kk : "");
+    cJSON_AddStringToObject(p, "nik", nik ? nik : "");
+    cJSON_AddStringToObject(p, "lang", "en");
+    cJSON* r = send_api_request(base_url, api_key, xdata_key, api_secret,
+                                "api/v8/auth/regist/dukcapil", p,
+                                id_token ? id_token : "", "POST", NULL);
+    cJSON_Delete(p);
+    return r;
+}
+
+cJSON* validate_msisdn(const char* base_url, const char* api_key,
+                       const char* xdata_key, const char* api_secret,
+                       const char* id_token, const char* msisdn) {
+    cJSON* p = cJSON_CreateObject();
+    cJSON_AddBoolToObject(p, "with_bizon", 1);
+    cJSON_AddBoolToObject(p, "with_family_plan", 1);
+    cJSON_AddBoolToObject(p, "is_enterprise", 0);
+    cJSON_AddBoolToObject(p, "with_optimus", 1);
+    cJSON_AddStringToObject(p, "lang", "en");
+    cJSON_AddStringToObject(p, "msisdn", msisdn ? msisdn : "");
+    cJSON_AddBoolToObject(p, "with_regist_status", 1);
+    cJSON_AddBoolToObject(p, "with_enterprise", 1);
+    cJSON* r = send_api_request(base_url, api_key, xdata_key, api_secret,
+                                "api/v8/auth/check-dukcapil", p,
+                                id_token, "POST", NULL);
+    cJSON_Delete(p);
+    return r;
+}
