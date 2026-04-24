@@ -102,6 +102,7 @@ void show_store_packages_browse(const char* base, const char* key,
         rule('='); printf("Store Packages\n"); rule('=');
 
         StoreItem* items = (StoreItem*)calloc((size_t)n + 1, sizeof(StoreItem));
+        if (!items) { printf("[-] OOM.\n"); cJSON_Delete(res); return; }
         for (int i = 0; i < n; i++) {
             cJSON* p = cJSON_GetArrayItem(list, i);
             int discounted = json_get_int(p, "discounted_price", 0);
@@ -158,6 +159,7 @@ void show_store_segments_browse(const char* base, const char* key,
         rule('='); printf("Store Segments\n"); rule('=');
         /* Alokasi untuk max 26 x 32 = ~832 items */
         StoreItem* items = (StoreItem*)calloc(26 * 32, sizeof(StoreItem));
+        if (!items) { printf("[-] OOM.\n"); cJSON_Delete(res); return; }
         int total = 0;
 
         for (int i = 0; i < ns && i < 26; i++) {
@@ -233,6 +235,7 @@ void show_redeemables_browse(const char* base, const char* key,
         rule('='); printf("Redeemables\n"); rule('=');
 
         StoreItem* items = (StoreItem*)calloc(26 * 32, sizeof(StoreItem));
+        if (!items) { printf("[-] OOM.\n"); cJSON_Delete(res); return; }
         int total = 0;
 
         for (int i = 0; i < nc && i < 26; i++) {
