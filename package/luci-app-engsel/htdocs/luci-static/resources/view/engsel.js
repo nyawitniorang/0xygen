@@ -2,25 +2,16 @@
 'require view';
 'require rpc';
 
-var callEngsel = rpc.declare({
-	object: 'engsel',
-	method: 'list_accounts'
-});
-
-function rpcCall(method, params) {
-	return new Promise(function(resolve, reject) {
-		var req = rpc.declare({ object: 'engsel', method: method, params: params || {} });
-		req.apply(null, Array.prototype.slice.call(arguments, 1))
-			.then(resolve)
-			.catch(reject);
-	});
-}
-
 function engRpc(method, args) {
-	return rpc.declare({
+	var a = args || {};
+	var paramNames = Object.keys(a);
+	var paramValues = paramNames.map(function(k) { return a[k]; });
+	var fn = rpc.declare({
 		object: 'engsel',
-		method: method
-	})(args || {}).catch(function(e) {
+		method: method,
+		params: paramNames
+	});
+	return fn.apply(null, paramValues).catch(function(e) {
 		return { error: String(e) };
 	});
 }
@@ -94,17 +85,17 @@ var navItems = {};
 
 /* ── Navigation ──────────────────────────────────── */
 var NAV = [
-	{ id: 'dashboard',  icon: '\u2302', label: 'Dashboard' },
-	{ id: 'accounts',   icon: '\u263A', label: 'Akun' },
-	{ id: 'packages',   icon: '\u2606', label: 'Paket Saya' },
-	{ id: 'buy',        icon: '\u26A1', label: 'Beli Paket' },
-	{ id: 'store',      icon: '\u2637', label: 'XL Store' },
-	{ id: 'history',    icon: '\u231A', label: 'Riwayat' },
-	{ id: 'features',   icon: '\u2699', label: 'Fitur Lanjutan' },
-	{ id: 'notif',      icon: '\u2709', label: 'Notifikasi' },
-	{ id: 'register',   icon: '\u270E', label: 'Registrasi' },
-	{ id: 'bookmarks',  icon: '\u2605', label: 'Bookmark' },
-	{ id: 'settings',   icon: '\u2692', label: 'Pengaturan' }
+	{ id: 'dashboard',  icon: '\uD83C\uDFE0', label: 'Dashboard' },
+	{ id: 'accounts',   icon: '\uD83D\uDC64', label: 'Akun' },
+	{ id: 'packages',   icon: '\uD83D\uDCE6', label: 'Paket' },
+	{ id: 'buy',        icon: '\uD83D\uDED2', label: 'Beli' },
+	{ id: 'store',      icon: '\uD83C\uDFEA', label: 'Store' },
+	{ id: 'history',    icon: '\uD83D\uDCCB', label: 'Riwayat' },
+	{ id: 'features',   icon: '\u2699\uFE0F', label: 'Fitur' },
+	{ id: 'notif',      icon: '\uD83D\uDD14', label: 'Notif' },
+	{ id: 'register',   icon: '\uD83D\uDCDD', label: 'Registrasi' },
+	{ id: 'bookmarks',  icon: '\u2B50',        label: 'Bookmark' },
+	{ id: 'settings',   icon: '\uD83D\uDD27', label: 'Setting' }
 ];
 
 function navigate(page) {
@@ -113,6 +104,8 @@ function navigate(page) {
 		navItems[k].classList.toggle('active', k === page);
 	});
 	renderPage();
+	/* scroll active pill into view */
+	if (navItems[page]) navItems[page].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
 }
 
 function renderPage() {
@@ -1371,29 +1364,34 @@ return view.extend({
 		var container = el('div', { id: 'view-engsel' });
 		var app = el('div', { class: 'eng-app' });
 
-		/* Sidebar */
-		var sidebar = el('div', { class: 'eng-sidebar' });
-		sidebar.appendChild(el('div', { class: 'eng-logo' }, [
-			el('h2', {}, ['ENGSEL']),
-			el('small', {}, ['MyXL Client v1.0'])
-		]));
+		/* Top header */
+		var header = el('div', { class: 'eng-topbar' }, [
+			el('span', { class: 'eng-topbar-title' }, ['ENGSEL']),
+			el('span', { class: 'eng-topbar-sub' }, ['MyXL Client'])
+		]);
+		app.appendChild(header);
+
+		/* Horizontal nav bar (glassmorphism iOS style) */
+		var navbar = el('div', { class: 'eng-navbar' });
+		var navScroll = el('div', { class: 'eng-navbar-scroll' });
 
 		NAV.forEach(function(n) {
 			var item = el('div', {
-				class: 'eng-nav-item' + (n.id === state.page ? ' active' : ''),
+				class: 'eng-nav-pill' + (n.id === state.page ? ' active' : ''),
 				onclick: function() { navigate(n.id); }
 			}, [
-				el('span', { class: 'nav-icon' }, [n.icon]),
-				n.label
+				el('span', { class: 'eng-nav-icon' }, [n.icon]),
+				el('span', { class: 'eng-nav-label' }, [n.label])
 			]);
 			navItems[n.id] = item;
-			sidebar.appendChild(item);
+			navScroll.appendChild(item);
 		});
+		navbar.appendChild(navScroll);
+		app.appendChild(navbar);
 
 		/* Main content */
 		mainContent = el('div', { class: 'eng-main' });
 
-		app.appendChild(sidebar);
 		app.appendChild(mainContent);
 		container.appendChild(app);
 

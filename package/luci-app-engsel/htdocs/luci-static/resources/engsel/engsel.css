@@ -1,4 +1,4 @@
-/* Engsel LuCI Dark Theme - Inspired by modern crypto dashboard */
+/* Engsel LuCI Dark Theme - iOS Glassmorphism Navigation */
 
 :root {
 	--eng-bg: #0a0e1a;
@@ -18,6 +18,8 @@
 	--eng-radius: 12px;
 	--eng-radius-sm: 8px;
 	--eng-shadow: 0 4px 24px rgba(0,0,0,0.3);
+	--eng-glass: rgba(21, 28, 44, 0.72);
+	--eng-glass-border: rgba(255, 255, 255, 0.08);
 }
 
 #view-engsel {
@@ -27,7 +29,6 @@
 	font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* Override LuCI default styles */
 #view-engsel .cbi-map,
 #view-engsel .cbi-section {
 	background: transparent;
@@ -40,38 +41,22 @@
 /* ── Layout ─────────────────────────────────────── */
 .eng-app {
 	display: flex;
+	flex-direction: column;
 	min-height: 100vh;
 }
 
-.eng-sidebar {
-	width: 220px;
+/* ── Top Bar ────────────────────────────────────── */
+.eng-topbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 14px 20px;
 	background: var(--eng-bg2);
-	border-right: 1px solid var(--eng-border);
-	padding: 20px 0;
-	position: sticky;
-	top: 0;
-	height: 100vh;
-	overflow-y: auto;
-	flex-shrink: 0;
-}
-
-.eng-main {
-	flex: 1;
-	padding: 24px;
-	min-width: 0;
-	overflow-x: hidden;
-}
-
-/* ── Sidebar ────────────────────────────────────── */
-.eng-logo {
-	padding: 0 20px 20px;
 	border-bottom: 1px solid var(--eng-border);
-	margin-bottom: 16px;
 }
 
-.eng-logo h2 {
-	margin: 0;
-	font-size: 20px;
+.eng-topbar-title {
+	font-size: 18px;
 	font-weight: 700;
 	background: var(--eng-gradient);
 	-webkit-background-clip: text;
@@ -79,41 +64,86 @@
 	background-clip: text;
 }
 
-.eng-logo small {
-	color: var(--eng-text2);
+.eng-topbar-sub {
 	font-size: 11px;
+	color: var(--eng-text2);
 }
 
-.eng-nav-item {
+/* ── Horizontal Navbar (iOS Glassmorphism) ──────── */
+.eng-navbar {
+	position: sticky;
+	top: 0;
+	z-index: 100;
+	background: var(--eng-glass);
+	backdrop-filter: blur(16px) saturate(180%);
+	-webkit-backdrop-filter: blur(16px) saturate(180%);
+	border-bottom: 1px solid var(--eng-glass-border);
+	padding: 8px 12px;
+}
+
+.eng-navbar-scroll {
+	display: flex;
+	gap: 6px;
+	overflow-x: auto;
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+	scroll-behavior: smooth;
+	-webkit-overflow-scrolling: touch;
+}
+
+.eng-navbar-scroll::-webkit-scrollbar {
+	display: none;
+}
+
+.eng-nav-pill {
 	display: flex;
 	align-items: center;
-	gap: 10px;
-	padding: 10px 20px;
+	gap: 6px;
+	padding: 8px 14px;
+	border-radius: 20px;
+	font-size: 13px;
 	color: var(--eng-text2);
 	cursor: pointer;
-	transition: all 0.2s;
-	border-left: 3px solid transparent;
-	font-size: 13px;
-	text-decoration: none;
+	transition: all 0.25s ease;
+	white-space: nowrap;
 	user-select: none;
+	flex-shrink: 0;
+	border: 1px solid transparent;
 }
 
-.eng-nav-item:hover {
+.eng-nav-pill:hover {
 	color: var(--eng-text);
-	background: rgba(124, 58, 237, 0.08);
+	background: rgba(124, 58, 237, 0.1);
 }
 
-.eng-nav-item.active {
-	color: var(--eng-accent2);
-	background: rgba(124, 58, 237, 0.12);
-	border-left-color: var(--eng-accent);
+.eng-nav-pill.active {
+	color: #fff;
+	background: var(--eng-gradient);
+	border-color: transparent;
 	font-weight: 600;
+	box-shadow: 0 2px 12px rgba(124, 58, 237, 0.35);
 }
 
-.eng-nav-item .nav-icon {
-	width: 18px;
-	text-align: center;
-	font-size: 14px;
+.eng-nav-icon {
+	font-size: 15px;
+	line-height: 1;
+}
+
+.eng-nav-label {
+	font-size: 12px;
+	line-height: 1;
+}
+
+/* ── Main Content ──────────────────────────────── */
+.eng-main {
+	flex: 1;
+	padding: 20px;
+	min-width: 0;
+	overflow-x: hidden;
+	max-width: 1200px;
+	margin: 0 auto;
+	width: 100%;
+	box-sizing: border-box;
 }
 
 /* ── Header ─────────────────────────────────────── */
@@ -126,7 +156,7 @@
 
 .eng-header h1 {
 	margin: 0;
-	font-size: 24px;
+	font-size: 22px;
 	font-weight: 700;
 	color: var(--eng-text);
 }
@@ -157,12 +187,12 @@
 
 .eng-card-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 	gap: 16px;
 	margin-bottom: 16px;
 }
 
-/* ── Status cards (balance, number, etc) ────────── */
+/* ── Status cards ───────────────────────────────── */
 .eng-stat-card {
 	background: var(--eng-card);
 	border: 1px solid var(--eng-border);
@@ -187,7 +217,7 @@
 .eng-stat-card.accent-yellow::before { background: var(--eng-warning); }
 
 .eng-stat-label {
-	font-size: 12px;
+	font-size: 11px;
 	color: var(--eng-text2);
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
@@ -195,7 +225,7 @@
 }
 
 .eng-stat-value {
-	font-size: 24px;
+	font-size: 22px;
 	font-weight: 700;
 	color: var(--eng-text);
 }
@@ -510,25 +540,38 @@
 }
 
 /* ── Responsive ─────────────────────────────────── */
-@media (max-width: 768px) {
-	.eng-app {
-		flex-direction: column;
-	}
-	.eng-sidebar {
-		width: 100%;
-		height: auto;
-		position: static;
-		border-right: none;
-		border-bottom: 1px solid var(--eng-border);
-		padding: 10px 0;
-	}
-	.eng-sidebar .eng-logo { padding: 0 16px 10px; }
-	.eng-nav-item { padding: 8px 16px; }
+
+/* Small screens: icon-only nav pills */
+@media (max-width: 640px) {
+	.eng-navbar { padding: 6px 8px; }
+	.eng-nav-pill { padding: 8px 10px; gap: 0; }
+	.eng-nav-label { display: none; }
+	.eng-nav-icon { font-size: 18px; }
+	.eng-main { padding: 14px; }
+	.eng-card-grid { grid-template-columns: 1fr; }
+	.eng-stat-value { font-size: 18px; }
+	.eng-topbar { padding: 10px 14px; }
+}
+
+/* Medium screens: shorter labels */
+@media (min-width: 641px) and (max-width: 900px) {
+	.eng-nav-pill { padding: 7px 10px; }
+	.eng-nav-label { font-size: 11px; }
 	.eng-main { padding: 16px; }
+}
+
+/* Large screens */
+@media (min-width: 901px) {
 	.eng-card-grid {
-		grid-template-columns: 1fr;
+		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 	}
-	.eng-stat-value { font-size: 20px; }
+}
+
+/* ── Table responsive ──────────────────────────── */
+@media (max-width: 640px) {
+	.eng-table { font-size: 12px; }
+	.eng-table thead th,
+	.eng-table tbody td { padding: 8px 10px; }
 }
 
 /* ── Utility ────────────────────────────────────── */
