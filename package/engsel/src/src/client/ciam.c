@@ -54,15 +54,20 @@ static char* md5_hex(const char *input) {
     return hex;
 }
 
-static char* get_timestamp_with_ms(int offset_seconds) {
+/* Keluarkan timestamp format ISO-8601 tanpa colon di TZ:
+ *   2026-04-24T07:00:00.123+0700
+ * time_delta_seconds ditambahkan ke WAKTU (mis. -300 untuk 5 menit sebelumnya),
+ * tapi TZ offset selalu dipertahankan TZ_OFFSET_SEC (+0700).
+ * Python reference: ts_gmt7_without_colon() di app/client/encrypt.py */
+static char* get_timestamp_with_ms(int time_delta_seconds) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    time_t now = tv.tv_sec + offset_seconds;
+    time_t now = tv.tv_sec + TZ_OFFSET_SEC + time_delta_seconds;
     int ms = tv.tv_usec / 1000;
     struct tm *t = gmtime(&now);
     char buf[64];
-    int tz_hour = offset_seconds / 3600;
-    int tz_min = (offset_seconds % 3600) / 60;
+    int tz_hour = TZ_OFFSET_SEC / 3600;
+    int tz_min = (TZ_OFFSET_SEC % 3600) / 60;
     snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03d%+03d%02d",
              t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
              t->tm_hour, t->tm_min, t->tm_sec, ms,
@@ -71,11 +76,12 @@ static char* get_timestamp_with_ms(int offset_seconds) {
 }
 
 static char* get_ts_for_signature(void) {
-    return get_timestamp_with_ms(TZ_OFFSET_SEC);
+    return get_timestamp_with_ms(0);
 }
 
 static char* get_timestamp_header(void) {
-    return get_timestamp_with_ms(TZ_OFFSET_SEC - 300);
+    /* Mirror Python: ts_gmt7_without_colon(now_gmt7 - timedelta(minutes=5)) */
+    return get_timestamp_with_ms(-300);
 }
 
 /* Fingerprint MUST be stable across sessions — server memvalidasi fingerprint
@@ -352,6 +358,19 @@ cJSON* submit_otp(const char* base_ciam_url, const char* basic_auth, const char*
 
     char* ts_for_sign = get_ts_for_signature();
     char* signature = generate_ax_api_signature(ts_for_sign, final_contact, code, contact_type, ax_api_sig_key);
+
+    if (getenv("ENGSEL_DEBUG")) {
+        fprintf(stderr, "[DEBUG] ts_for_sign='%s'\n", ts_for_sign);
+        fprintf(stderr, "[DEBUG] contact_type='%s'\n", contact_type);
+        fprintf(stderr, "[DEBUG] contact='%s' (len=%zu)\n", final_contact, strlen(final_contact));
+        fprintf(stderr, "[DEBUG] code='%s' (len=%zu)\n", code, strlen(code));
+        fprintf(stderr, "[DEBUG] ax_api_sig_key='%s' (len=%zu)\n",
+                ax_api_sig_key ? ax_api_sig_key : "(null)",
+                ax_api_sig_key ? strlen(ax_api_sig_key) : 0);
+        fprintf(stderr, "[DEBUG] preimage='%spassword%s%s%sopenid'\n",
+                ts_for_sign, contact_type, final_contact, code);
+        fprintf(stderr, "[DEBUG] signature='%s'\n", signature ? signature : "(null)");
+    }
 
     char auth_hdr[512];
     snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Basic %s", basic_auth);
