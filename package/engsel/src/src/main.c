@@ -797,6 +797,10 @@ int main(void) {
                                 printf("\n[+] LOGIN BERHASIL!\n");
                             } else {
                                 printf("\n[-] Login Gagal. Pastikan OTP benar dan tidak kedaluwarsa.\n");
+                                if (login_res) {
+                                    char* raw = cJSON_PrintUnformatted(login_res);
+                                    if (raw) { printf("    Server: %s\n", raw); free(raw); }
+                                }
                             }
                             if (login_res) cJSON_Delete(login_res);
                         } else {
@@ -944,6 +948,10 @@ int main(void) {
                                         printf("\n[+] LOGIN BERHASIL!\n");
                                     } else {
                                         printf("\n[-] Login Gagal. Pastikan OTP benar dan tidak kedaluwarsa.\n");
+                                        if (login_res) {
+                                            char* raw = cJSON_PrintUnformatted(login_res);
+                                            if (raw) { printf("    Server: %s\n", raw); free(raw); }
+                                        }
                                     }
                                     if (login_res) cJSON_Delete(login_res);
                                     printf("Tekan Enter untuk melanjutkan..."); fflush(stdout); flush_stdin();

@@ -11,6 +11,7 @@
 #include "../include/client/http_client.h"
 #include "../include/service/crypto_helper.h"
 #include "../include/util/json_util.h"
+#include "../include/util/file_util.h"
 
 #define TZ_OFFSET_SEC (7 * 3600)
 
@@ -77,7 +78,26 @@ static char* get_timestamp_header(void) {
     return get_timestamp_with_ms(TZ_OFFSET_SEC - 300);
 }
 
+/* Fingerprint MUST be stable across sessions — server memvalidasi fingerprint
+ * saat OTP submit terhadap fingerprint saat OTP request. Kalau berubah per-call,
+ * submit OTP akan ditolak walau kode benar.
+ * Implementasi: cache ke /etc/engsel/ax.fp (mirror Python load_ax_fp). */
+#define AX_FP_PATH "/etc/engsel/ax.fp"
+
 static char* generate_ax_fingerprint(void) {
+    /* 1) Cache lookup dulu. */
+    char* cached = file_read_all(AX_FP_PATH, NULL);
+    if (cached) {
+        /* trim whitespace (file_read_all sudah null-terminate) */
+        size_t cl = strlen(cached);
+        while (cl > 0 && (cached[cl-1] == '\n' || cached[cl-1] == '\r' ||
+                          cached[cl-1] == ' '  || cached[cl-1] == '\t')) {
+            cached[--cl] = '\0';
+        }
+        if (cl > 0) return cached;   /* kembalikan cache */
+        free(cached);
+    }
+
     const char* key_str = getenv("AX_FP_KEY");
     if (!key_str) return strdup("dummy");
 
@@ -116,8 +136,12 @@ static char* generate_ax_fingerprint(void) {
     EVP_CIPHER_CTX_free(ctx);
 
     int total = len1 + len2;
-    char* b64 = malloc(total * 2 + 10);
+    char* b64 = malloc((size_t)total * 2 + 10);
+    if (!b64) return strdup("dummy");
     EVP_EncodeBlock((unsigned char*)b64, ct, total);
+
+    /* 2) Simpan ke cache agar submit_otp pakai value yang sama. */
+    (void)file_write_atomic(AX_FP_PATH, b64);
     return b64;
 }
 
