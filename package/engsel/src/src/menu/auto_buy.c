@@ -51,6 +51,8 @@ extern char active_subs_type[32];
 extern int  is_logged_in;
 extern int  active_account_idx;
 extern cJSON* g_tokens_arr;
+extern char id_tok[4096];   /* token login aktif, diisi di authenticate_and_fetch_balance */
+extern char acc_tok[4096];
 extern void ensure_token_fresh(cJSON* tokens_arr, const char* B_CIAM,
                                const char* B_API, const char* B_AUTH,
                                const char* UA, const char* API_KEY,
@@ -475,15 +477,19 @@ static int ab_trigger_purchase(const char* base_api, const char* api_key,
         }
     }
 
-    ab_log("[%s] TRIGGER purchase price=%d method=%s", nm, price, pm);
-    (void)enc_field_key; (void)access_token;
+    /* Pay-for: untuk decoy pakai emoji "🤑" (sama dengan menu Loop/manual);
+     * untuk non-decoy pakai nilai dari package_family. Overwrite amount untuk
+     * decoy = price + dec_price, untuk non-decoy = price. */
+    int   overwrite_amount = dec_code ? (price + dec_price) : price;
+    const char* pay_for    = dec_code ? "\xF0\x9F\xA4\x91" : p_for; /* 🤑 */
+    int   conf_idx         = dec_code ? 1 : 0;
+
+    ab_log("[%s] TRIGGER price=%d overwrite=%d method=%s", nm, price, overwrite_amount, pm);
     cJSON* res = execute_balance_purchase(base_api, api_key, xdata_key, x_api_secret,
                                           enc_field_key, id_token, access_token,
                                           opt_code, price, nm, conf,
                                           dec_code, dec_price, dec_name, dec_conf,
-                                          p_for,
-                                          dec_code ? price : 0,  /* overwrite_amount */
-                                          0);
+                                          pay_for, overwrite_amount, conf_idx);
     int ok = 0;
     if (res) {
         const char* st = json_get_str(res, "status", "");
@@ -534,10 +540,7 @@ int auto_buy_worker_main(void) {
             next_refresh = now + 300;
         }
 
-        cJSON* account = cJSON_GetArrayItem(tokens_arr, active_account_idx);
-        const char* id_tok = account ? json_get_str(account, "id_token", "") : "";
-        const char* acc_tok = account ? json_get_str(account, "access_token", "") : "";
-        if (!id_tok[0]) { ab_log("no active token"); sleep(30); continue; }
+        if (!id_tok[0]) { ab_log("no active id_token (belum login / refresh gagal)"); sleep(30); continue; }
 
         cJSON* arr = ab_load();
         int n = cJSON_GetArraySize(arr);
