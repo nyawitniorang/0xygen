@@ -13,7 +13,9 @@ AUTOBUY_FILE="/etc/engsel/auto_buy.json"
 AX_FP_FILE="/etc/engsel/ax.fp"
 CACHE_DIR="/tmp/engsel-cache"
 
-mkdir -p "$CACHE_DIR"
+mkdir -p "$CACHE_DIR" /etc/engsel/hot_data /etc/engsel/decoy_data
+[ -s "$TOKENS_FILE" ] || echo '[]' > "$TOKENS_FILE"
+[ -s "$BOOKMARK_FILE" ] || echo '[]' > "$BOOKMARK_FILE"
 
 # ── helpers ──────────────────────────────────────────────────────
 json_get() { jsonfilter -i "$1" -e "$2" 2>/dev/null; }
