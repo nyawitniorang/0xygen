@@ -1192,7 +1192,10 @@ static void custom_decoy_menu(const char* base_api, const char* api_key,
  *     "option_name", "order" }
  * ------------------------------------------------------------------------- */
 
-static const char* HOT_JSON_PATH = "/etc/engsel/hot_data/hot.json";
+static const char* HOT_JSON_PATH      = "/etc/engsel/hot_data/hot.json";
+/* OpenWrt memisahkan rootfs (overlay) dan firmware asli (/rom). File bawaan
+ * paket tersedia di /rom walau /etc-nya sudah dimodifikasi. */
+static const char* HOT_JSON_ROM_PATH  = "/rom/etc/engsel/hot_data/hot.json";
 
 static cJSON* ch_load(void) {
     size_t sz = 0;
@@ -1210,6 +1213,21 @@ static int ch_save(cJSON* arr) {
     if (!out) return -1;
     int rc = file_write_atomic(HOT_JSON_PATH, out);
     free(out);
+    return rc;
+}
+
+/* Kembalikan hot.json ke bawaan paket (file di /rom saat di OpenWrt).
+ * Return 0 sukses, -1 kalau sumber bawaan tidak ada / tulis gagal. */
+static int ch_reset_to_default(void) {
+    size_t sz = 0;
+    char* raw = file_read_all(HOT_JSON_ROM_PATH, &sz);
+    if (!raw || sz == 0) { free(raw); return -1; }
+    /* Validasi JSON supaya tidak overwrite dengan file rusak. */
+    cJSON* test = cJSON_Parse(raw);
+    if (!test) { free(raw); return -1; }
+    cJSON_Delete(test);
+    int rc = file_write_atomic(HOT_JSON_PATH, raw);
+    free(raw);
     return rc;
 }
 
@@ -1304,6 +1322,7 @@ static void custom_hot_menu(const char* base_api, const char* api_key,
         printf("Perintah:\n");
         printf("  add          Tambah paket HOT baru\n");
         printf("  del <nomor>  Hapus entry\n");
+        printf("  reset        Kembalikan ke paket HOT bawaan\n");
         printf("  00           Kembali\n");
         printf("Pilihan: ");
         fflush(stdout);
@@ -1328,6 +1347,21 @@ static void custom_hot_menu(const char* base_api, const char* api_key,
                 else                   printf("[-] Gagal simpan.\n");
             }
             cJSON_Delete(arr); pause_enter();
+        }
+        else if (cmd_eq(cmd, "reset", "r")) {
+            cJSON_Delete(arr);
+            printf("Reset paket HOT ke bawaan? Semua entry tambahan akan hilang. (y/n): ");
+            if (read_yn("")) {
+                if (ch_reset_to_default() == 0) {
+                    printf("[+] hot.json dikembalikan dari %s\n", HOT_JSON_ROM_PATH);
+                } else {
+                    printf("[-] Gagal reset. Sumber bawaan (%s) tidak ditemukan\n"
+                           "    atau file tidak bisa ditulis. Di sistem non-OpenWrt\n"
+                           "    /rom biasanya tidak ada — reinstall paket untuk kembali\n"
+                           "    ke bawaan.\n", HOT_JSON_ROM_PATH);
+                }
+            }
+            pause_enter();
         }
         else {
             cJSON_Delete(arr);
