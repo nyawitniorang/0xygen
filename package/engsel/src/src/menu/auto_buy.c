@@ -723,6 +723,10 @@ void auto_buy_menu(const char* base_api, const char* api_key,
             if (p > 0) { printf("[-] Worker sudah jalan (pid=%d). Pakai 'stop' dulu.\n", (int)p); pause_enter(); continue; }
             printf("[*] Menjalankan worker foreground. Tekan Ctrl+C untuk berhenti...\n");
             auto_buy_worker_main();
+            /* Restore default SIGINT/SIGTERM supaya Ctrl+C di menu interaktif
+             * berjalan seperti biasa (handler ab_on_term dipasang oleh worker). */
+            signal(SIGINT,  SIG_DFL);
+            signal(SIGTERM, SIG_DFL);
             g_ab_stop = 0;
             printf("[+] Worker berhenti.\n");
             pause_enter();
