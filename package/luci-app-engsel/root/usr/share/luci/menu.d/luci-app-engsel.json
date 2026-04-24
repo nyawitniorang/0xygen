@@ -1,0 +1,14 @@
+{
+	"admin/services/engsel": {
+		"title": "Engsel",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "engsel"
+		},
+		"depends": {
+			"acl": [ "luci-app-engsel" ],
+			"uci": {}
+		}
+	}
+}

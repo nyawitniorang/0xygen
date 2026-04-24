@@ -1,0 +1,12 @@
+#!/bin/sh
+# Ensure engsel config directory exists
+mkdir -p /etc/engsel/hot_data /etc/engsel/decoy_data
+
+# Initialize empty JSON arrays if missing
+[ -s /etc/engsel/refresh-tokens.json ] || echo '[]' > /etc/engsel/refresh-tokens.json
+[ -s /etc/engsel/bookmark.json ] || echo '[]' > /etc/engsel/bookmark.json
+
+# Restart rpcd to pick up the new plugin
+/etc/init.d/rpcd restart 2>/dev/null
+
+exit 0

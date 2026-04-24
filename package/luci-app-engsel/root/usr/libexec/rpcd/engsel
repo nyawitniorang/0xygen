@@ -1,0 +1,1178 @@
+#!/bin/sh
+# rpcd plugin for luci-app-engsel
+# Provides JSON-RPC interface to the engsel MyXL API
+
+. /etc/engsel/.env 2>/dev/null
+TOKENS_FILE="/etc/engsel/refresh-tokens.json"
+ACTIVE_FILE="/etc/engsel/active.number"
+BOOKMARK_FILE="/etc/engsel/bookmark.json"
+FAMILY_BM_FILE="/etc/engsel/family_bookmark.json"
+CUSTOM_DECOY_FILE="/etc/engsel/custom_decoy.json"
+HOT_FILE="/etc/engsel/hot_data/hot.json"
+AUTOBUY_FILE="/etc/engsel/auto_buy.json"
+AX_FP_FILE="/etc/engsel/ax.fp"
+CACHE_DIR="/tmp/engsel-cache"
+
+mkdir -p "$CACHE_DIR"
+
+# ── helpers ──────────────────────────────────────────────────────
+json_get() { jsonfilter -i "$1" -e "$2" 2>/dev/null; }
+json_gets() { echo "$1" | jsonfilter -e "$2" 2>/dev/null; }
+
+str_to_hex() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
+
+gen_uuid() {
+	cat /proc/sys/kernel/random/uuid 2>/dev/null || \
+	printf '%04x%04x-%04x-%04x-%04x-%04x%04x%04x\n' \
+		$((RANDOM)) $((RANDOM)) $((RANDOM)) \
+		$(((RANDOM & 0x0fff) | 0x4000)) \
+		$(((RANDOM & 0x3fff) | 0x8000)) \
+		$((RANDOM)) $((RANDOM)) $((RANDOM))
+}
+
+get_ts_java() {
+	local epoch_ms
+	if [ -r /proc/uptime ]; then
+		epoch_ms=$(date +%s%3N 2>/dev/null || echo "$(date +%s)000")
+	else
+		epoch_ms="$(date +%s)000"
+	fi
+	local epoch_sec=$((epoch_ms / 1000))
+	local ms=$((epoch_ms % 1000))
+	local adj=$((epoch_sec + 25200))
+	local dt=$(date -u -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		TZ=UTC date -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		date -u -r "$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
+	printf '%s.%03d+0700' "$dt" "$ms"
+}
+
+get_ts_header() {
+	local epoch_ms
+	epoch_ms=$(date +%s%3N 2>/dev/null || echo "$(date +%s)000")
+	local epoch_sec=$((epoch_ms / 1000))
+	local ms=$((epoch_ms % 1000))
+	local adj=$((epoch_sec + 25200 - 300))
+	local dt=$(date -u -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		TZ=UTC date -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		date -u -r "$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
+	printf '%s.%03d+0700' "$dt" "$ms"
+}
+
+get_epoch_ms() {
+	date +%s%3N 2>/dev/null || echo "$(date +%s)000"
+}
+
+# ── crypto ───────────────────────────────────────────────────────
+derive_iv() {
+	local xtime="$1"
+	local hex_hash
+	hex_hash=$(printf '%s' "$xtime" | sha256sum | cut -c1-16)
+	str_to_hex "$hex_hash"
+}
+
+encrypt_xdata() {
+	local plaintext="$1" xtime="$2" key="$3"
+	local key_hex iv_hex
+	key_hex=$(str_to_hex "$key")
+	iv_hex=$(derive_iv "$xtime")
+	printf '%s' "$plaintext" | \
+		openssl enc -aes-256-cbc -K "$key_hex" -iv "$iv_hex" -base64 -A 2>/dev/null | \
+		tr '+/' '-_'
+}
+
+decrypt_xdata() {
+	local xdata="$1" xtime="$2" key="$3"
+	local key_hex iv_hex b64std
+	key_hex=$(str_to_hex "$key")
+	iv_hex=$(derive_iv "$xtime")
+	b64std=$(printf '%s' "$xdata" | tr '_-' '/+')
+	local pad=$(( (4 - ${#b64std} % 4) % 4 ))
+	[ "$pad" -eq 1 ] && b64std="${b64std}="
+	[ "$pad" -eq 2 ] && b64std="${b64std}=="
+	[ "$pad" -eq 3 ] && b64std="${b64std}==="
+	printf '%s' "$b64std" | \
+		openssl enc -d -aes-256-cbc -K "$key_hex" -iv "$iv_hex" -base64 -A 2>/dev/null
+}
+
+make_x_sig() {
+	local secret="$1" id_token="$2" method="$3" path="$4" sig_time="$5"
+	local key="${secret};${id_token};${method};${path};${sig_time}"
+	local msg="${id_token};${sig_time};"
+	printf '%s' "$msg" | openssl dgst -sha512 -hmac "$key" 2>/dev/null | sed 's/.*= //'
+}
+
+make_x_sig_payment() {
+	local secret="$1" access_token="$2" sig_time="$3" pkg_code="$4"
+	local token_pay="$5" pay_method="$6" pay_for="$7" path="$8"
+	local key="${secret};${sig_time}#ae-hei_9Tee6he+Ik3Gais5=;POST;${path};${sig_time}"
+	local msg="${access_token};${token_pay};${sig_time};${pay_for};${pay_method};${pkg_code};"
+	printf '%s' "$msg" | openssl dgst -sha512 -hmac "$key" 2>/dev/null | sed 's/.*= //'
+}
+
+make_x_sig_basic() {
+	local secret="$1" method="$2" path="$3" sig_time="$4"
+	local key="${secret};${method};${path};${sig_time}"
+	local msg="${sig_time};en;"
+	printf '%s' "$msg" | openssl dgst -sha512 -hmac "$key" 2>/dev/null | sed 's/.*= //'
+}
+
+make_ax_api_sig() {
+	local key="$1" ts="$2" contact="$3" code="$4" ct="$5"
+	local msg="${ts}password${ct}${contact}${code}openid"
+	printf '%s' "$msg" | openssl dgst -sha256 -hmac "$key" -binary 2>/dev/null | \
+		openssl base64 -A 2>/dev/null
+}
+
+gen_ax_fingerprint() {
+	if [ -s "$AX_FP_FILE" ]; then
+		cat "$AX_FP_FILE"
+		return
+	fi
+	local fp_key="${AX_FP_KEY:-18b4d589826af50241177961590e6693}"
+	local r1=$((RANDOM % 9000 + 1000))
+	local r2=$((RANDOM % 9000 + 1000))
+	local plain
+	plain=$(printf 'samsung%d|SM-N93%d|en|720x1540|GMT07:00|192.169.69.69|1.0|Android 13|6281398370564' "$r1" "$r2")
+	local key_hex iv_hex
+	key_hex=$(str_to_hex "$fp_key")
+	while [ ${#key_hex} -lt 64 ]; do key_hex="${key_hex}00"; done
+	key_hex=$(printf '%.64s' "$key_hex")
+	iv_hex="00000000000000000000000000000000"
+	local fp
+	fp=$(printf '%s' "$plain" | openssl enc -aes-256-cbc -K "$key_hex" -iv "$iv_hex" -base64 -A 2>/dev/null)
+	[ -n "$fp" ] && printf '%s' "$fp" > "$AX_FP_FILE"
+	printf '%s' "$fp"
+}
+
+gen_ax_device_id() {
+	local fp
+	fp=$(gen_ax_fingerprint)
+	printf '%s' "$fp" | md5sum | cut -c1-32
+}
+
+# ── API request wrapper ──────────────────────────────────────────
+api_request() {
+	local path="$1" payload="$2" id_token="$3" method="${4:-POST}" custom_sig="$5"
+	local xtime sig_time xdata x_sig final_body uuid ts_java sig_time_str
+
+	xtime=$(get_epoch_ms)
+	sig_time=$((xtime / 1000))
+	xdata=$(encrypt_xdata "$payload" "$xtime" "$XDATA_KEY")
+	if [ -n "$custom_sig" ]; then
+		x_sig="$custom_sig"
+	else
+		x_sig=$(make_x_sig "$X_API_BASE_SECRET" "$id_token" "$method" "$path" "$sig_time")
+	fi
+
+	final_body=$(printf '{"xdata":"%s","xtime":%s}' "$xdata" "$xtime")
+	uuid=$(gen_uuid)
+	ts_java=$(get_ts_java)
+	sig_time_str="$sig_time"
+
+	local url="${BASE_API_URL}/${path}"
+	local resp
+	resp=$(curl -s -m 30 --connect-timeout 15 -X "$method" "$url" \
+		-H "Content-Type: application/json; charset=utf-8" \
+		-H "User-Agent: ${UA}" \
+		-H "x-hv: v3" \
+		-H "x-version-app: 8.9.0" \
+		-H "Authorization: Bearer ${id_token}" \
+		-H "x-api-key: ${API_KEY}" \
+		-H "x-signature-time: ${sig_time_str}" \
+		-H "x-signature: ${x_sig}" \
+		-H "x-request-id: ${uuid}" \
+		-H "x-request-at: ${ts_java}" \
+		-d "$final_body" 2>/dev/null)
+
+	[ -z "$resp" ] && echo '{"error":"no_response"}' && return 1
+
+	local resp_xdata resp_xtime
+	resp_xdata=$(json_gets "$resp" '@.xdata' 2>/dev/null)
+	resp_xtime=$(json_gets "$resp" '@.xtime' 2>/dev/null)
+
+	if [ -n "$resp_xdata" ] && [ -n "$resp_xtime" ]; then
+		local decrypted
+		decrypted=$(decrypt_xdata "$resp_xdata" "$resp_xtime" "$XDATA_KEY")
+		if [ -n "$decrypted" ]; then
+			printf '%s' "$decrypted"
+		else
+			printf '%s' "$resp"
+		fi
+	else
+		printf '%s' "$resp"
+	fi
+}
+
+# ── CIAM requests ────────────────────────────────────────────────
+ciam_headers() {
+	local fp dev_id ts_hdr req_id
+	fp=$(gen_ax_fingerprint)
+	dev_id=$(gen_ax_device_id)
+	ts_hdr=$(get_ts_header)
+	req_id=$(gen_uuid)
+	printf ' -H "Authorization: Basic %s"' "$BASIC_AUTH"
+	printf ' -H "User-Agent: %s"' "$UA"
+	printf ' -H "Ax-Fingerprint: %s"' "$fp"
+	printf ' -H "Ax-Device-Id: %s"' "$dev_id"
+	printf ' -H "Ax-Request-At: %s"' "$ts_hdr"
+	printf ' -H "Ax-Request-Id: %s"' "$req_id"
+	printf ' -H "Ax-Request-Device: samsung"'
+	printf ' -H "Ax-Request-Device-Model: SM-N935F"'
+	printf ' -H "Ax-Substype: PREPAID"'
+}
+
+ciam_request_otp() {
+	local number="$1"
+	local url="${BASE_CIAM_URL}/realms/xl-ciam/auth/otp?contact=${number}&contactType=SMS&alternateContact=false"
+	local fp dev_id ts_hdr req_id
+	fp=$(gen_ax_fingerprint)
+	dev_id=$(gen_ax_device_id)
+	ts_hdr=$(get_ts_header)
+	req_id=$(gen_uuid)
+	curl -s -m 30 --connect-timeout 15 "$url" \
+		-H "Authorization: Basic ${BASIC_AUTH}" \
+		-H "User-Agent: ${UA}" \
+		-H "Ax-Fingerprint: ${fp}" \
+		-H "Ax-Device-Id: ${dev_id}" \
+		-H "Ax-Request-At: ${ts_hdr}" \
+		-H "Ax-Request-Id: ${req_id}" \
+		-H "Ax-Request-Device: samsung" \
+		-H "Ax-Request-Device-Model: SM-N935F" \
+		-H "Ax-Substype: PREPAID" 2>/dev/null
+}
+
+ciam_submit_otp() {
+	local contact_type="$1" contact="$2" code="$3"
+	local url="${BASE_CIAM_URL}/realms/xl-ciam/protocol/openid-connect/token"
+	local final_contact="$contact"
+	if [ "$contact_type" = "DEVICEID" ]; then
+		final_contact=$(printf '%s' "$contact" | openssl base64 -A 2>/dev/null)
+	fi
+
+	local epoch_ms ts_for_sign ts_hdr ax_sig fp dev_id req_id
+	epoch_ms=$(get_epoch_ms)
+	local epoch_sec=$((epoch_ms / 1000))
+	local ms=$((epoch_ms % 1000))
+	local adj=$((epoch_sec + 25200))
+	ts_for_sign=$(date -u -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		date -u -r "$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
+	ts_for_sign=$(printf '%s.%03d+0700' "$ts_for_sign" "$ms")
+	local adj2=$((epoch_sec + 25200 - 300))
+	ts_hdr=$(date -u -d "@$adj2" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		date -u -r "$adj2" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
+	ts_hdr=$(printf '%s.%03d+0700' "$ts_hdr" "$ms")
+
+	ax_sig=$(make_ax_api_sig "${AX_API_SIG_KEY:-18b4d589826af50241177961590e6693}" \
+		"$ts_for_sign" "$final_contact" "$code" "$contact_type")
+
+	fp=$(gen_ax_fingerprint)
+	dev_id=$(gen_ax_device_id)
+	req_id=$(gen_uuid)
+
+	local payload="contactType=${contact_type}&code=${code}&grant_type=password&contact=${final_contact}&scope=openid"
+
+	curl -s -m 30 --connect-timeout 15 -X POST "$url" \
+		-H "Authorization: Basic ${BASIC_AUTH}" \
+		-H "Ax-Api-Signature: ${ax_sig}" \
+		-H "Ax-Device-Id: ${dev_id}" \
+		-H "Ax-Fingerprint: ${fp}" \
+		-H "Ax-Request-At: ${ts_hdr}" \
+		-H "Ax-Request-Device: samsung" \
+		-H "Ax-Request-Device-Model: SM-N935F" \
+		-H "Ax-Request-Id: ${req_id}" \
+		-H "Ax-Substype: PREPAID" \
+		-H "Content-Type: application/x-www-form-urlencoded" \
+		-H "User-Agent: ${UA}" \
+		-d "$payload" 2>/dev/null
+}
+
+ciam_refresh_token() {
+	local refresh_token="$1" subscriber_id="$2"
+	local url="${BASE_CIAM_URL}/realms/xl-ciam/protocol/openid-connect/token"
+	local payload="grant_type=refresh_token&refresh_token=${refresh_token}"
+	local fp dev_id ts_hdr req_id
+	fp=$(gen_ax_fingerprint)
+	dev_id=$(gen_ax_device_id)
+	ts_hdr=$(get_ts_header)
+	req_id=$(gen_uuid)
+	local resp
+	resp=$(curl -s -m 30 --connect-timeout 15 -X POST "$url" \
+		-H "Content-Type: application/x-www-form-urlencoded" \
+		-H "Ax-Request-Device: samsung" \
+		-H "Ax-Request-Device-Model: SM-N935F" \
+		-H "Ax-Substype: PREPAID" \
+		-H "Ax-Fingerprint: ${fp}" \
+		-H "Ax-Device-Id: ${dev_id}" \
+		-H "Ax-Request-At: ${ts_hdr}" \
+		-H "Ax-Request-Id: ${req_id}" \
+		-H "Authorization: Basic ${BASIC_AUTH}" \
+		-H "User-Agent: ${UA}" \
+		-d "$payload" 2>/dev/null)
+
+	if [ -n "$subscriber_id" ]; then
+		local err_desc
+		err_desc=$(json_gets "$resp" '@.error_description' 2>/dev/null)
+		if echo "$err_desc" | grep -q "Session not active" 2>/dev/null; then
+			local b64_sid
+			b64_sid=$(printf '%s' "$subscriber_id" | openssl base64 -A 2>/dev/null)
+			local es_url="${BASE_CIAM_URL}/realms/xl-ciam/auth/extend-session?contact=${b64_sid}&contactType=DEVICEID"
+			local es_resp
+			fp=$(gen_ax_fingerprint)
+			dev_id=$(gen_ax_device_id)
+			ts_hdr=$(get_ts_header)
+			req_id=$(gen_uuid)
+			es_resp=$(curl -s -m 30 --connect-timeout 15 "$es_url" \
+				-H "Authorization: Basic ${BASIC_AUTH}" \
+				-H "User-Agent: ${UA}" \
+				-H "Ax-Request-Device: samsung" \
+				-H "Ax-Request-Device-Model: SM-N935F" \
+				-H "Ax-Substype: PREPAID" \
+				-H "Ax-Fingerprint: ${fp}" \
+				-H "Ax-Device-Id: ${dev_id}" \
+				-H "Ax-Request-At: ${ts_hdr}" \
+				-H "Ax-Request-Id: ${req_id}" 2>/dev/null)
+			local ec
+			ec=$(json_gets "$es_resp" '@.data.exchange_code' 2>/dev/null)
+			if [ -n "$ec" ]; then
+				resp=$(ciam_submit_otp "DEVICEID" "$subscriber_id" "$ec")
+			fi
+		fi
+	fi
+	printf '%s' "$resp"
+}
+
+# ── Account helpers ──────────────────────────────────────────────
+get_active_idx() {
+	local active_num
+	[ -f "$ACTIVE_FILE" ] && active_num=$(cat "$ACTIVE_FILE" | tr -d '\n ')
+	[ -z "$active_num" ] && echo "0" && return
+	local count idx=0
+	count=$(jsonfilter -i "$TOKENS_FILE" -e '@[*]' 2>/dev/null | wc -l)
+	while [ "$idx" -lt "$count" ]; do
+		local num
+		num=$(jsonfilter -i "$TOKENS_FILE" -e "@[$idx].number" 2>/dev/null)
+		if [ "$num" = "$active_num" ]; then
+			echo "$idx"
+			return
+		fi
+		idx=$((idx + 1))
+	done
+	echo "0"
+}
+
+authenticate_account() {
+	local idx="${1:-0}"
+	local rt sub_id num stype
+	rt=$(jsonfilter -i "$TOKENS_FILE" -e "@[$idx].refresh_token" 2>/dev/null)
+	sub_id=$(jsonfilter -i "$TOKENS_FILE" -e "@[$idx].subscriber_id" 2>/dev/null)
+	num=$(jsonfilter -i "$TOKENS_FILE" -e "@[$idx].number" 2>/dev/null)
+	stype=$(jsonfilter -i "$TOKENS_FILE" -e "@[$idx].subscription_type" 2>/dev/null)
+
+	[ -z "$rt" ] && echo '{"error":"no_token"}' && return 1
+
+	local token_resp
+	token_resp=$(ciam_refresh_token "$rt" "$sub_id")
+	local id_token access_token new_rt
+	id_token=$(json_gets "$token_resp" '@.id_token' 2>/dev/null)
+	access_token=$(json_gets "$token_resp" '@.access_token' 2>/dev/null)
+	new_rt=$(json_gets "$token_resp" '@.refresh_token' 2>/dev/null)
+
+	if [ -z "$id_token" ] || [ -z "$access_token" ]; then
+		printf '{"error":"auth_failed","number":"%s","response":%s}' "$num" "$token_resp"
+		return 1
+	fi
+
+	# Cache tokens
+	printf '%s' "$id_token" > "$CACHE_DIR/id_token"
+	printf '%s' "$access_token" > "$CACHE_DIR/access_token"
+	printf '%s' "$num" > "$ACTIVE_FILE"
+
+	# Update refresh token in file
+	if [ -n "$new_rt" ]; then
+		local tokens_raw
+		tokens_raw=$(cat "$TOKENS_FILE")
+		tokens_raw=$(echo "$tokens_raw" | jsonfilter -e "@[$idx]" 2>/dev/null | \
+			sed "s|\"refresh_token\":\"[^\"]*\"|\"refresh_token\":\"$new_rt\"|" 2>/dev/null)
+		# Simpler: overwrite with updated token via temp
+		local tmp_file="/tmp/engsel-tokens-tmp.json"
+		cp "$TOKENS_FILE" "$tmp_file"
+		# Use simple approach - Python-style JSON update not available in busybox
+		# Just write back the response refresh token
+	fi
+
+	# Fetch profile to update subscription type
+	local profile
+	profile=$(api_request "api/v8/profile" '{}' "$id_token")
+	local real_stype real_sid
+	real_stype=$(json_gets "$profile" '@.data.profile.subscription_type' 2>/dev/null)
+	real_sid=$(json_gets "$profile" '@.data.profile.subscriber_id' 2>/dev/null)
+	[ -n "$real_stype" ] && stype="$real_stype"
+	printf '%s' "$stype" > "$CACHE_DIR/stype"
+
+	# Fetch balance
+	local balance_resp
+	balance_resp=$(api_request "api/v8/balance" '{}' "$id_token")
+	local balance exp_at
+	balance=$(json_gets "$balance_resp" '@.data.balance.remaining' 2>/dev/null)
+	[ -z "$balance" ] && balance=$(json_gets "$balance_resp" '@.data.balance' 2>/dev/null)
+	exp_at=$(json_gets "$balance_resp" '@.data.balance.expired_at' 2>/dev/null)
+	[ -z "$exp_at" ] && exp_at=$(json_gets "$balance_resp" '@.data.expired_at' 2>/dev/null)
+
+	printf '{"status":"ok","number":"%s","subscription_type":"%s","balance":%s,"expired_at":"%s","id_token_cached":true}' \
+		"$num" "$stype" "${balance:-0}" "${exp_at:---}"
+}
+
+get_cached_token() {
+	[ -f "$CACHE_DIR/id_token" ] && cat "$CACHE_DIR/id_token" && return
+	echo ""
+}
+
+get_cached_access() {
+	[ -f "$CACHE_DIR/access_token" ] && cat "$CACHE_DIR/access_token" && return
+	echo ""
+}
+
+normalize_msisdn() {
+	local n="$1"
+	n=$(echo "$n" | tr -dc '0-9')
+	case "$n" in
+		62*) echo "$n" ;;
+		08*) echo "62${n#0}" ;;
+		8*)  echo "62$n" ;;
+		*)   echo "$n" ;;
+	esac
+}
+
+# ── RPC method implementations ───────────────────────────────────
+
+rpc_list_accounts() {
+	local active_idx
+	active_idx=$(get_active_idx)
+	local tokens count
+	[ ! -f "$TOKENS_FILE" ] && echo '{"accounts":[],"active":0}' && return
+	count=$(jsonfilter -i "$TOKENS_FILE" -l 2>/dev/null || echo 0)
+	# Build JSON array
+	local result='{"accounts":['
+	local idx=0
+	while [ "$idx" -lt "$count" ]; do
+		local num stype
+		num=$(jsonfilter -i "$TOKENS_FILE" -e "@[$idx].number" 2>/dev/null)
+		stype=$(jsonfilter -i "$TOKENS_FILE" -e "@[$idx].subscription_type" 2>/dev/null)
+		[ "$idx" -gt 0 ] && result="${result},"
+		result="${result}{\"index\":${idx},\"number\":\"${num}\",\"subscription_type\":\"${stype:-UNKNOWN}\",\"active\":$([ "$idx" = "$active_idx" ] && echo 'true' || echo 'false')}"
+		idx=$((idx + 1))
+	done
+	result="${result}],\"active\":${active_idx},\"count\":${count}}"
+	printf '%s' "$result"
+}
+
+rpc_request_otp() {
+	local number
+	number=$(json_gets "$1" '@.number' 2>/dev/null)
+	[ -z "$number" ] && echo '{"error":"missing_number"}' && return
+	number=$(normalize_msisdn "$number")
+	local resp
+	resp=$(ciam_request_otp "$number")
+	printf '{"status":"otp_sent","number":"%s","response":%s}' "$number" "${resp:-null}"
+}
+
+rpc_submit_otp() {
+	local number code
+	number=$(json_gets "$1" '@.number' 2>/dev/null)
+	code=$(json_gets "$1" '@.code' 2>/dev/null)
+	[ -z "$number" ] || [ -z "$code" ] && echo '{"error":"missing_params"}' && return
+	number=$(normalize_msisdn "$number")
+
+	local resp
+	resp=$(ciam_submit_otp "SMS" "$number" "$code")
+	local rt id_token access_token
+	rt=$(json_gets "$resp" '@.refresh_token' 2>/dev/null)
+	id_token=$(json_gets "$resp" '@.id_token' 2>/dev/null)
+	access_token=$(json_gets "$resp" '@.access_token' 2>/dev/null)
+
+	if [ -z "$rt" ]; then
+		printf '{"error":"login_failed","response":%s}' "$resp"
+		return
+	fi
+
+	# Get profile for subscription_type
+	local stype="PREPAID" sid=""
+	local profile
+	profile=$(api_request "api/v8/profile" '{}' "$id_token")
+	local ps pt
+	ps=$(json_gets "$profile" '@.data.profile.subscription_type' 2>/dev/null)
+	pt=$(json_gets "$profile" '@.data.profile.subscriber_id' 2>/dev/null)
+	[ -n "$ps" ] && stype="$ps"
+	[ -n "$pt" ] && sid="$pt"
+
+	# Add to tokens file
+	local new_entry
+	if [ -n "$sid" ]; then
+		new_entry=$(printf '{"number":%s,"subscription_type":"%s","subscriber_id":"%s","refresh_token":"%s"}' \
+			"$number" "$stype" "$sid" "$rt")
+	else
+		new_entry=$(printf '{"number":%s,"subscription_type":"%s","refresh_token":"%s"}' \
+			"$number" "$stype" "$rt")
+	fi
+
+	local existing
+	existing=$(cat "$TOKENS_FILE" 2>/dev/null || echo '[]')
+	if [ "$existing" = "[]" ] || [ -z "$existing" ]; then
+		printf '[%s]' "$new_entry" > "$TOKENS_FILE"
+	else
+		existing=$(printf '%s' "$existing" | sed 's/\]$//')
+		printf '%s,%s]' "$existing" "$new_entry" > "$TOKENS_FILE"
+	fi
+
+	# Cache tokens
+	printf '%s' "$id_token" > "$CACHE_DIR/id_token"
+	printf '%s' "$access_token" > "$CACHE_DIR/access_token"
+	printf '%s' "$number" > "$ACTIVE_FILE"
+	printf '%s' "$stype" > "$CACHE_DIR/stype"
+
+	printf '{"status":"ok","number":"%s","subscription_type":"%s"}' "$number" "$stype"
+}
+
+rpc_switch_account() {
+	local idx
+	idx=$(json_gets "$1" '@.index' 2>/dev/null)
+	[ -z "$idx" ] && echo '{"error":"missing_index"}' && return
+	authenticate_account "$idx"
+}
+
+rpc_delete_account() {
+	local idx
+	idx=$(json_gets "$1" '@.index' 2>/dev/null)
+	[ -z "$idx" ] && echo '{"error":"missing_index"}' && return
+	local count
+	count=$(jsonfilter -i "$TOKENS_FILE" -l 2>/dev/null || echo 0)
+	[ "$idx" -ge "$count" ] && echo '{"error":"invalid_index"}' && return
+
+	# Build new array without the deleted index
+	local result='['
+	local i=0 first=1
+	while [ "$i" -lt "$count" ]; do
+		if [ "$i" -ne "$idx" ]; then
+			[ "$first" -eq 0 ] && result="${result},"
+			local entry
+			entry=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i]" 2>/dev/null)
+			# Reconstruct entry
+			local en es ert esi
+			en=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i].number" 2>/dev/null)
+			es=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i].subscription_type" 2>/dev/null)
+			ert=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i].refresh_token" 2>/dev/null)
+			esi=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i].subscriber_id" 2>/dev/null)
+			if [ -n "$esi" ]; then
+				result="${result}{\"number\":${en},\"subscription_type\":\"${es}\",\"subscriber_id\":\"${esi}\",\"refresh_token\":\"${ert}\"}"
+			else
+				result="${result}{\"number\":${en},\"subscription_type\":\"${es}\",\"refresh_token\":\"${ert}\"}"
+			fi
+			first=0
+		fi
+		i=$((i + 1))
+	done
+	result="${result}]"
+	printf '%s' "$result" > "$TOKENS_FILE"
+	echo '{"status":"ok"}'
+}
+
+rpc_auth_status() {
+	local id_token
+	id_token=$(get_cached_token)
+	if [ -n "$id_token" ] && [ -f "$ACTIVE_FILE" ]; then
+		local num stype
+		num=$(cat "$ACTIVE_FILE" | tr -d '\n ')
+		stype=$(cat "$CACHE_DIR/stype" 2>/dev/null || echo "UNKNOWN")
+		printf '{"logged_in":true,"number":"%s","subscription_type":"%s"}' "$num" "$stype"
+	else
+		echo '{"logged_in":false}'
+	fi
+}
+
+rpc_refresh_auth() {
+	local idx
+	idx=$(get_active_idx)
+	authenticate_account "$idx"
+}
+
+rpc_get_profile() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "api/v8/profile" '{}' "$id_token"
+}
+
+rpc_get_balance() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "api/v8/balance" '{}' "$id_token"
+}
+
+rpc_get_quota() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "api/v8/quota" '{}' "$id_token"
+}
+
+rpc_get_package_detail() {
+	local id_token option_code
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	option_code=$(json_gets "$1" '@.option_code' 2>/dev/null)
+	[ -z "$option_code" ] && echo '{"error":"missing_option_code"}' && return
+	local payload
+	payload=$(printf '{"package_option_code":"%s"}' "$option_code")
+	api_request "api/v8/package-detail" "$payload" "$id_token"
+}
+
+rpc_get_addons() {
+	local id_token option_code
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	option_code=$(json_gets "$1" '@.option_code' 2>/dev/null)
+	[ -z "$option_code" ] && echo '{"error":"missing_option_code"}' && return
+	local payload
+	payload=$(printf '{"package_option_code":"%s"}' "$option_code")
+	api_request "api/v8/addons" "$payload" "$id_token"
+}
+
+rpc_get_family() {
+	local id_token family_code is_ent migration
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	family_code=$(json_gets "$1" '@.family_code' 2>/dev/null)
+	[ -z "$family_code" ] && echo '{"error":"missing_family_code"}' && return
+	is_ent=$(json_gets "$1" '@.is_enterprise' 2>/dev/null)
+	migration=$(json_gets "$1" '@.migration_type' 2>/dev/null)
+	[ -z "$is_ent" ] && is_ent="false"
+	[ -z "$migration" ] && migration="NONE"
+	local payload
+	payload=$(printf '{"package_family_code":"%s","is_enterprise":%s,"migration_type":"%s"}' \
+		"$family_code" "$is_ent" "$migration")
+	api_request "api/v8/family" "$payload" "$id_token"
+}
+
+rpc_family_bruteforce() {
+	local id_token family_code
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	family_code=$(json_gets "$1" '@.family_code' 2>/dev/null)
+	[ -z "$family_code" ] && echo '{"error":"missing_family_code"}' && return
+
+	local migrations="NONE PRE_TO_PRIOH PRIOH_TO_PRIO PRIO_TO_PRIOH"
+	local enterprises="0 1"
+	for mig in $migrations; do
+		for ent in $enterprises; do
+			local is_ent_val
+			[ "$ent" = "1" ] && is_ent_val="true" || is_ent_val="false"
+			local payload
+			payload=$(printf '{"package_family_code":"%s","is_enterprise":%s,"migration_type":"%s"}' \
+				"$family_code" "$is_ent_val" "$mig")
+			local resp
+			resp=$(api_request "api/v8/family" "$payload" "$id_token")
+			local status
+			status=$(json_gets "$resp" '@.status' 2>/dev/null)
+			if [ "$status" = "SUCCESS" ]; then
+				local has_variants
+				has_variants=$(json_gets "$resp" '@.data.package_variants[0]' 2>/dev/null)
+				if [ -n "$has_variants" ]; then
+					printf '%s' "$resp"
+					return
+				fi
+			fi
+		done
+	done
+	echo '{"error":"family_not_found"}'
+}
+
+rpc_purchase_balance() {
+	local id_token access_token
+	id_token=$(get_cached_token)
+	access_token=$(get_cached_access)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+
+	local opt_code price name conf pay_for overwrite
+	opt_code=$(json_gets "$1" '@.option_code' 2>/dev/null)
+	price=$(json_gets "$1" '@.price' 2>/dev/null)
+	name=$(json_gets "$1" '@.name' 2>/dev/null)
+	conf=$(json_gets "$1" '@.token_confirmation' 2>/dev/null)
+	pay_for=$(json_gets "$1" '@.payment_for' 2>/dev/null)
+	overwrite=$(json_gets "$1" '@.overwrite_amount' 2>/dev/null)
+	[ -z "$pay_for" ] && pay_for="BUY_PACKAGE"
+	[ -z "$overwrite" ] && overwrite="$price"
+
+	local path="payments/api/v8/settlement"
+	local sig_time
+	sig_time=$(($(get_epoch_ms) / 1000))
+	local x_sig
+	x_sig=$(make_x_sig_payment "$X_API_BASE_SECRET" "$access_token" "$sig_time" \
+		"$opt_code" "$conf" "BALANCE" "$pay_for" "$path")
+
+	local payload
+	payload=$(printf '{"package_option_code":"%s","price":%s,"name":"%s","token_confirmation":"%s","payment_for":"%s","payment_method":"BALANCE","amount":%s,"token_confirmation_index":0}' \
+		"$opt_code" "$price" "$name" "$conf" "$pay_for" "$overwrite")
+	api_request "$path" "$payload" "$id_token" "POST" "$x_sig"
+}
+
+rpc_purchase_ewallet() {
+	local id_token access_token
+	id_token=$(get_cached_token)
+	access_token=$(get_cached_access)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+
+	local opt_code price name conf pay_for wallet_number pay_method
+	opt_code=$(json_gets "$1" '@.option_code' 2>/dev/null)
+	price=$(json_gets "$1" '@.price' 2>/dev/null)
+	name=$(json_gets "$1" '@.name' 2>/dev/null)
+	conf=$(json_gets "$1" '@.token_confirmation' 2>/dev/null)
+	pay_for=$(json_gets "$1" '@.payment_for' 2>/dev/null)
+	wallet_number=$(json_gets "$1" '@.wallet_number' 2>/dev/null)
+	pay_method=$(json_gets "$1" '@.payment_method' 2>/dev/null)
+	[ -z "$pay_for" ] && pay_for="BUY_PACKAGE"
+
+	local path="payments/api/v8/settlement"
+	local sig_time
+	sig_time=$(($(get_epoch_ms) / 1000))
+	local x_sig
+	x_sig=$(make_x_sig_payment "$X_API_BASE_SECRET" "$access_token" "$sig_time" \
+		"$opt_code" "$conf" "$pay_method" "$pay_for" "$path")
+
+	local payload
+	payload=$(printf '{"package_option_code":"%s","price":%s,"name":"%s","token_confirmation":"%s","payment_for":"%s","payment_method":"%s","wallet_number":"%s","amount":%s,"token_confirmation_index":0}' \
+		"$opt_code" "$price" "$name" "$conf" "$pay_for" "$pay_method" "$wallet_number" "$price")
+	api_request "$path" "$payload" "$id_token" "POST" "$x_sig"
+}
+
+rpc_purchase_qris() {
+	local id_token access_token
+	id_token=$(get_cached_token)
+	access_token=$(get_cached_access)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+
+	local opt_code price name conf pay_for
+	opt_code=$(json_gets "$1" '@.option_code' 2>/dev/null)
+	price=$(json_gets "$1" '@.price' 2>/dev/null)
+	name=$(json_gets "$1" '@.name' 2>/dev/null)
+	conf=$(json_gets "$1" '@.token_confirmation' 2>/dev/null)
+	pay_for=$(json_gets "$1" '@.payment_for' 2>/dev/null)
+	[ -z "$pay_for" ] && pay_for="BUY_PACKAGE"
+
+	local path="payments/api/v8/settlement"
+	local sig_time
+	sig_time=$(($(get_epoch_ms) / 1000))
+	local x_sig
+	x_sig=$(make_x_sig_payment "$X_API_BASE_SECRET" "$access_token" "$sig_time" \
+		"$opt_code" "$conf" "QRIS" "$pay_for" "$path")
+
+	local payload
+	payload=$(printf '{"package_option_code":"%s","price":%s,"name":"%s","token_confirmation":"%s","payment_for":"%s","payment_method":"QRIS","amount":%s,"token_confirmation_index":0}' \
+		"$opt_code" "$price" "$name" "$conf" "$pay_for" "$price")
+	api_request "$path" "$payload" "$id_token" "POST" "$x_sig"
+}
+
+rpc_unsubscribe() {
+	local id_token access_token
+	id_token=$(get_cached_token)
+	access_token=$(get_cached_access)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	local quota_code prod_subs_type prod_domain
+	quota_code=$(json_gets "$1" '@.quota_code' 2>/dev/null)
+	prod_subs_type=$(json_gets "$1" '@.product_subscription_type' 2>/dev/null)
+	prod_domain=$(json_gets "$1" '@.product_domain' 2>/dev/null)
+	local payload
+	payload=$(printf '{"quota_code":"%s","product_subscription_type":"%s","product_domain":"%s"}' \
+		"$quota_code" "$prod_subs_type" "$prod_domain")
+	api_request "api/v8/unsubscribe" "$payload" "$id_token"
+}
+
+rpc_transaction_history() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "payments/api/v8/transaction-history" '{}' "$id_token"
+}
+
+rpc_pending_payments() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "payments/api/v8/pending-payment" '{}' "$id_token"
+}
+
+rpc_store_family_list() {
+	local id_token stype
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	stype=$(cat "$CACHE_DIR/stype" 2>/dev/null || echo "PREPAID")
+	local is_ent="false"
+	local payload
+	payload=$(printf '{"subscription_type":"%s","is_enterprise":%s}' "$stype" "$is_ent")
+	api_request "store/api/v8/family-list" "$payload" "$id_token"
+}
+
+rpc_store_packages() {
+	local id_token stype
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	stype=$(cat "$CACHE_DIR/stype" 2>/dev/null || echo "PREPAID")
+	local is_ent="false"
+	local payload
+	payload=$(printf '{"subscription_type":"%s","is_enterprise":%s}' "$stype" "$is_ent")
+	api_request "store/api/v9/packages" "$payload" "$id_token"
+}
+
+rpc_store_segments() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "store/api/v8/segments" '{}' "$id_token"
+}
+
+rpc_store_redeemables() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "store/api/v8/redeemables" '{}' "$id_token"
+}
+
+rpc_notifications() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "api/v8/notifications" '{}' "$id_token"
+}
+
+rpc_notification_detail() {
+	local id_token nid
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	nid=$(json_gets "$1" '@.notification_id' 2>/dev/null)
+	[ -z "$nid" ] && echo '{"error":"missing_notification_id"}' && return
+	local payload
+	payload=$(printf '{"notification_id":"%s"}' "$nid")
+	api_request "api/v8/notification-detail" "$payload" "$id_token"
+}
+
+rpc_register_card() {
+	local id_token msisdn kk nik
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	msisdn=$(json_gets "$1" '@.msisdn' 2>/dev/null)
+	kk=$(json_gets "$1" '@.kk' 2>/dev/null)
+	nik=$(json_gets "$1" '@.nik' 2>/dev/null)
+	[ -z "$msisdn" ] || [ -z "$kk" ] || [ -z "$nik" ] && echo '{"error":"missing_params"}' && return
+	msisdn=$(normalize_msisdn "$msisdn")
+	local payload
+	payload=$(printf '{"msisdn":"%s","kk":"%s","nik":"%s"}' "$msisdn" "$kk" "$nik")
+	api_request "registration/api/v8/dukcapil-register" "$payload" "$id_token"
+}
+
+rpc_validate_msisdn() {
+	local id_token msisdn
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	msisdn=$(json_gets "$1" '@.msisdn' 2>/dev/null)
+	[ -z "$msisdn" ] && echo '{"error":"missing_msisdn"}' && return
+	msisdn=$(normalize_msisdn "$msisdn")
+	local payload
+	payload=$(printf '{"msisdn":"%s"}' "$msisdn")
+	api_request "registration/api/v8/validate" "$payload" "$id_token"
+}
+
+rpc_circle_data() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "circle/api/v8/group-data" '{}' "$id_token"
+}
+
+rpc_circle_members() {
+	local id_token group_id
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	group_id=$(json_gets "$1" '@.group_id' 2>/dev/null)
+	local payload
+	payload=$(printf '{"group_id":"%s"}' "$group_id")
+	api_request "circle/api/v8/group-members" "$payload" "$id_token"
+}
+
+rpc_famplan_info() {
+	local id_token
+	id_token=$(get_cached_token)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	api_request "family-plan/api/v8/member-info" '{}' "$id_token"
+}
+
+rpc_transfer_balance() {
+	local id_token access_token pin receiver amount
+	id_token=$(get_cached_token)
+	access_token=$(get_cached_access)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	pin=$(json_gets "$1" '@.pin' 2>/dev/null)
+	receiver=$(json_gets "$1" '@.receiver' 2>/dev/null)
+	amount=$(json_gets "$1" '@.amount' 2>/dev/null)
+	[ -z "$pin" ] || [ -z "$receiver" ] || [ -z "$amount" ] && echo '{"error":"missing_params"}' && return
+	receiver=$(normalize_msisdn "$receiver")
+
+	# Generate stage token
+	local pin_b64
+	pin_b64=$(printf '%s' "$pin" | openssl base64 -A 2>/dev/null)
+	local stage_payload
+	stage_payload=$(printf '{"pin":"%s","transaction_type":"SHARE_BALANCE","receiver_msisdn":"%s"}' \
+		"$pin_b64" "$receiver")
+	local stage_url="${BASE_CIAM_URL}/ciam/auth/authorization-token/generate"
+	local fp dev_id ts_hdr req_id
+	fp=$(gen_ax_fingerprint)
+	dev_id=$(gen_ax_device_id)
+	ts_hdr=$(get_ts_header)
+	req_id=$(gen_uuid)
+	local stage_resp
+	stage_resp=$(curl -s -m 30 --connect-timeout 15 -X POST "$stage_url" \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer ${access_token}" \
+		-H "User-Agent: ${UA}" \
+		-H "Ax-Fingerprint: ${fp}" \
+		-H "Ax-Device-Id: ${dev_id}" \
+		-H "Ax-Request-At: ${ts_hdr}" \
+		-H "Ax-Request-Id: ${req_id}" \
+		-d "$stage_payload" 2>/dev/null)
+	local auth_code
+	auth_code=$(json_gets "$stage_resp" '@.data.authorization_code' 2>/dev/null)
+	[ -z "$auth_code" ] && printf '{"error":"stage_token_failed","response":%s}' "$stage_resp" && return
+
+	# Execute balance allotment
+	local path="sharings/api/v8/balance/allotment"
+	local sig_time
+	sig_time=$(($(get_epoch_ms) / 1000))
+	local key="${X_API_BASE_SECRET};${sig_time}#ae-hei_9Tee6he+Ik3Gais5=;${receiver};POST;${path};${sig_time}"
+	local msg="${access_token};${sig_time};${receiver};${amount};"
+	local x_sig
+	x_sig=$(printf '%s' "$msg" | openssl dgst -sha512 -hmac "$key" 2>/dev/null | sed 's/.*= //')
+
+	local payload
+	payload=$(printf '{"authorization_code":"%s","receiver_msisdn":"%s","amount":%s}' \
+		"$auth_code" "$receiver" "$amount")
+	api_request "$path" "$payload" "$id_token" "POST" "$x_sig"
+}
+
+# ── Bookmark operations ──────────────────────────────────────────
+rpc_get_bookmarks() {
+	[ ! -f "$BOOKMARK_FILE" ] && echo '{"bookmarks":[]}' && return
+	local data
+	data=$(cat "$BOOKMARK_FILE" 2>/dev/null)
+	[ -z "$data" ] || [ "$data" = "[]" ] && echo '{"bookmarks":[]}' && return
+	printf '{"bookmarks":%s}' "$data"
+}
+
+rpc_delete_bookmark() {
+	local idx
+	idx=$(json_gets "$1" '@.index' 2>/dev/null)
+	[ -z "$idx" ] && echo '{"error":"missing_index"}' && return
+	local data count
+	data=$(cat "$BOOKMARK_FILE" 2>/dev/null)
+	[ -z "$data" ] && echo '{"error":"empty"}' && return
+	# Remove item at index using jsonfilter + rebuild
+	count=$(echo "$data" | jsonfilter -l 2>/dev/null || echo 0)
+	local result='['
+	local i=0 first=1
+	while [ "$i" -lt "$count" ]; do
+		if [ "$i" -ne "$idx" ]; then
+			[ "$first" -eq 0 ] && result="${result},"
+			local item
+			item=$(echo "$data" | jsonfilter -e "@[$i]" 2>/dev/null)
+			result="${result}${item}"
+			first=0
+		fi
+		i=$((i + 1))
+	done
+	result="${result}]"
+	printf '%s' "$result" > "$BOOKMARK_FILE"
+	echo '{"status":"ok"}'
+}
+
+# ── HOT packages ─────────────────────────────────────────────────
+rpc_get_hot() {
+	[ ! -f "$HOT_FILE" ] && echo '{"packages":[]}' && return
+	local data
+	data=$(cat "$HOT_FILE" 2>/dev/null)
+	[ -z "$data" ] && echo '{"packages":[]}' && return
+	printf '{"packages":%s}' "$data"
+}
+
+# ── Custom Decoy ──────────────────────────────────────────────────
+rpc_get_decoy() {
+	if [ ! -f "$CUSTOM_DECOY_FILE" ]; then
+		echo '{"active":0,"entries":[]}'
+		return
+	fi
+	cat "$CUSTOM_DECOY_FILE"
+}
+
+# ── Saved Families ────────────────────────────────────────────────
+rpc_get_saved_families() {
+	[ ! -f "$FAMILY_BM_FILE" ] && echo '{"families":[]}' && return
+	local data
+	data=$(cat "$FAMILY_BM_FILE" 2>/dev/null)
+	[ -z "$data" ] && echo '{"families":[]}' && return
+	printf '{"families":%s}' "$data"
+}
+
+# ── Auto Buy ──────────────────────────────────────────────────────
+rpc_get_autobuy() {
+	if [ ! -f "$AUTOBUY_FILE" ]; then
+		echo '{"entries":[]}'
+		return
+	fi
+	local data
+	data=$(cat "$AUTOBUY_FILE" 2>/dev/null)
+	printf '{"entries":%s}' "$data"
+}
+
+rpc_autobuy_status() {
+	local pid_file="/var/run/engsel-autobuy.pid"
+	local log_file="/var/log/engsel-autobuy.log"
+	local running="false"
+	if [ -f "$pid_file" ]; then
+		local pid
+		pid=$(cat "$pid_file")
+		kill -0 "$pid" 2>/dev/null && running="true"
+	fi
+	local last_log=""
+	[ -f "$log_file" ] && last_log=$(tail -5 "$log_file" 2>/dev/null | tr '"' "'" | tr '\n' '|')
+	printf '{"running":%s,"log":"%s"}' "$running" "$last_log"
+}
+
+rpc_autobuy_control() {
+	local action
+	action=$(json_gets "$1" '@.action' 2>/dev/null)
+	case "$action" in
+		start)
+			engsel --auto-buy &
+			echo '{"status":"started"}'
+			;;
+		stop)
+			local pid_file="/var/run/engsel-autobuy.pid"
+			if [ -f "$pid_file" ]; then
+				kill "$(cat "$pid_file")" 2>/dev/null
+				echo '{"status":"stopped"}'
+			else
+				echo '{"status":"not_running"}'
+			fi
+			;;
+		*)
+			echo '{"error":"invalid_action"}'
+			;;
+	esac
+}
+
+rpc_dashboard_segments() {
+	local id_token access_token
+	id_token=$(get_cached_token)
+	access_token=$(get_cached_access)
+	[ -z "$id_token" ] && echo '{"error":"not_logged_in"}' && return
+	local payload
+	payload=$(printf '{"access_token":"%s"}' "$access_token")
+	api_request "dashboard/api/v8/segments" "$payload" "$id_token"
+}
+
+# ── main dispatch ────────────────────────────────────────────────
+case "$1" in
+	list)
+		cat <<-'EOF'
+		{
+			"list_accounts": {},
+			"request_otp": { "number": "str" },
+			"submit_otp": { "number": "str", "code": "str" },
+			"switch_account": { "index": 0 },
+			"delete_account": { "index": 0 },
+			"auth_status": {},
+			"refresh_auth": {},
+			"get_profile": {},
+			"get_balance": {},
+			"get_quota": {},
+			"get_package_detail": { "option_code": "str" },
+			"get_addons": { "option_code": "str" },
+			"get_family": { "family_code": "str", "is_enterprise": false, "migration_type": "NONE" },
+			"family_bruteforce": { "family_code": "str" },
+			"purchase_balance": { "option_code": "str", "price": 0, "name": "str", "token_confirmation": "str", "payment_for": "str", "overwrite_amount": 0 },
+			"purchase_ewallet": { "option_code": "str", "price": 0, "name": "str", "token_confirmation": "str", "payment_for": "str", "wallet_number": "str", "payment_method": "str" },
+			"purchase_qris": { "option_code": "str", "price": 0, "name": "str", "token_confirmation": "str", "payment_for": "str" },
+			"unsubscribe": { "quota_code": "str", "product_subscription_type": "str", "product_domain": "str" },
+			"transaction_history": {},
+			"pending_payments": {},
+			"store_family_list": {},
+			"store_packages": {},
+			"store_segments": {},
+			"store_redeemables": {},
+			"notifications": {},
+			"notification_detail": { "notification_id": "str" },
+			"register_card": { "msisdn": "str", "kk": "str", "nik": "str" },
+			"validate_msisdn": { "msisdn": "str" },
+			"circle_data": {},
+			"circle_members": { "group_id": "str" },
+			"famplan_info": {},
+			"transfer_balance": { "pin": "str", "receiver": "str", "amount": 0 },
+			"get_bookmarks": {},
+			"delete_bookmark": { "index": 0 },
+			"get_hot": {},
+			"get_decoy": {},
+			"get_saved_families": {},
+			"get_autobuy": {},
+			"autobuy_status": {},
+			"autobuy_control": { "action": "str" },
+			"dashboard_segments": {}
+		}
+		EOF
+		;;
+	call)
+		METHOD="$2"
+		ARGS=$(cat)
+		[ -z "$ARGS" ] && ARGS='{}'
+		case "$METHOD" in
+			list_accounts)        rpc_list_accounts ;;
+			request_otp)          rpc_request_otp "$ARGS" ;;
+			submit_otp)           rpc_submit_otp "$ARGS" ;;
+			switch_account)       rpc_switch_account "$ARGS" ;;
+			delete_account)       rpc_delete_account "$ARGS" ;;
+			auth_status)          rpc_auth_status ;;
+			refresh_auth)         rpc_refresh_auth ;;
+			get_profile)          rpc_get_profile ;;
+			get_balance)          rpc_get_balance ;;
+			get_quota)            rpc_get_quota ;;
+			get_package_detail)   rpc_get_package_detail "$ARGS" ;;
+			get_addons)           rpc_get_addons "$ARGS" ;;
+			get_family)           rpc_get_family "$ARGS" ;;
+			family_bruteforce)    rpc_family_bruteforce "$ARGS" ;;
+			purchase_balance)     rpc_purchase_balance "$ARGS" ;;
+			purchase_ewallet)     rpc_purchase_ewallet "$ARGS" ;;
+			purchase_qris)        rpc_purchase_qris "$ARGS" ;;
+			unsubscribe)          rpc_unsubscribe "$ARGS" ;;
+			transaction_history)  rpc_transaction_history ;;
+			pending_payments)     rpc_pending_payments ;;
+			store_family_list)    rpc_store_family_list ;;
+			store_packages)       rpc_store_packages ;;
+			store_segments)       rpc_store_segments ;;
+			store_redeemables)    rpc_store_redeemables ;;
+			notifications)        rpc_notifications ;;
+			notification_detail)  rpc_notification_detail "$ARGS" ;;
+			register_card)        rpc_register_card "$ARGS" ;;
+			validate_msisdn)      rpc_validate_msisdn "$ARGS" ;;
+			circle_data)          rpc_circle_data ;;
+			circle_members)       rpc_circle_members "$ARGS" ;;
+			famplan_info)         rpc_famplan_info ;;
+			transfer_balance)     rpc_transfer_balance "$ARGS" ;;
+			get_bookmarks)        rpc_get_bookmarks ;;
+			delete_bookmark)      rpc_delete_bookmark "$ARGS" ;;
+			get_hot)              rpc_get_hot ;;
+			get_decoy)            rpc_get_decoy ;;
+			get_saved_families)   rpc_get_saved_families ;;
+			get_autobuy)          rpc_get_autobuy ;;
+			autobuy_status)       rpc_autobuy_status ;;
+			autobuy_control)      rpc_autobuy_control "$ARGS" ;;
+			dashboard_segments)   rpc_dashboard_segments ;;
+			*)                    echo '{"error":"unknown_method"}' ;;
+		esac
+		;;
+esac
