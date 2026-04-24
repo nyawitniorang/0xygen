@@ -1,0 +1,15 @@
+{
+	"luci-app-engsel": {
+		"description": "Grant access to Engsel MyXL client",
+		"read": {
+			"ubus": {
+				"engsel": [ "*" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"engsel": [ "*" ]
+			}
+		}
+	}
+}

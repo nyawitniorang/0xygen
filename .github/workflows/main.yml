@@ -1,4 +1,4 @@
-name: Build engsel untuk OpenWrt 24.10 (ipk) + 25.12 (apk)
+name: Build engsel + luci-app-engsel untuk OpenWrt 24.10 (ipk) + 25.12 (apk)
 
 on:
   push:
@@ -32,7 +32,7 @@ jobs:
         env:
           ARCH: ${{ matrix.target.arch }}-24.10.0
           FEED_DIR: ${{ github.workspace }}/package
-          PACKAGES: engsel
+          PACKAGES: engsel luci-app-engsel
           BUILD_LOG: 1
           NO_SHFMT_CHECK: 1
           IGNORE_ERRORS: 1
@@ -46,8 +46,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target.artifact }}
-          path: bin/packages/${{ matrix.target.folder }}/*/engsel_*.ipk
-          if-no-files-found: error
+          path: |
+            bin/packages/${{ matrix.target.folder }}/*/engsel_*.ipk
+            bin/packages/${{ matrix.target.folder }}/*/luci-app-engsel_*.ipk
+          if-no-files-found: warn
           retention-days: 30
           compression-level: 0
 
@@ -55,7 +57,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: bin/packages/${{ matrix.target.folder }}/*/engsel_*.ipk
+          files: |
+            bin/packages/${{ matrix.target.folder }}/*/engsel_*.ipk
+            bin/packages/${{ matrix.target.folder }}/*/luci-app-engsel_*.ipk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -89,7 +93,7 @@ jobs:
         env:
           ARCH: ${{ matrix.target.arch }}-25.12.0
           FEED_DIR: ${{ github.workspace }}/package
-          PACKAGES: engsel
+          PACKAGES: engsel luci-app-engsel
           BUILD_LOG: 1
           NO_SHFMT_CHECK: 1
           IGNORE_ERRORS: 1
@@ -106,7 +110,9 @@ jobs:
           path: |
             bin/packages/${{ matrix.target.folder }}/*/engsel-*.apk
             bin/packages/${{ matrix.target.folder }}/*/engsel_*.apk
-          if-no-files-found: error
+            bin/packages/${{ matrix.target.folder }}/*/luci-app-engsel-*.apk
+            bin/packages/${{ matrix.target.folder }}/*/luci-app-engsel_*.apk
+          if-no-files-found: warn
           retention-days: 30
           compression-level: 0
 
@@ -117,6 +123,8 @@ jobs:
           files: |
             bin/packages/${{ matrix.target.folder }}/*/engsel-*.apk
             bin/packages/${{ matrix.target.folder }}/*/engsel_*.apk
+            bin/packages/${{ matrix.target.folder }}/*/luci-app-engsel-*.apk
+            bin/packages/${{ matrix.target.folder }}/*/luci-app-engsel_*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
