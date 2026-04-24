@@ -27,6 +27,32 @@ extern char active_subs_type[32];
 
 #define W 55
 
+static void fx_clear(void) { printf("\033[H\033[J"); fflush(stdout); }
+
+/* Cocokkan kata kunci command: `add` atau alias `a`. Return 1 kalau cocok. */
+static int cmd_eq(const char* cmd, const char* word, const char* alias) {
+    if (strcasecmp(cmd, word) == 0) return 1;
+    if (alias && strcasecmp(cmd, alias) == 0) return 1;
+    return 0;
+}
+
+/* Cocokkan command yang diikuti angka: `del 3` atau `d 3`. Return angka (>=1)
+ * kalau cocok, 0 kalau kata cocok tapi argumen invalid, -1 kalau tidak cocok. */
+static int cmd_num(const char* cmd, const char* word, const char* alias) {
+    size_t wlen = strlen(word);
+    size_t alen = alias ? strlen(alias) : 0;
+    const char* p = NULL;
+    if (strncasecmp(cmd, word, wlen) == 0 && (cmd[wlen] == ' ' || cmd[wlen] == '\t'))
+        p = cmd + wlen;
+    else if (alias && strncasecmp(cmd, alias, alen) == 0 && (cmd[alen] == ' ' || cmd[alen] == '\t'))
+        p = cmd + alen;
+    else
+        return -1;
+    while (*p == ' ' || *p == '\t') p++;
+    int v = atoi(p);
+    return v > 0 ? v : 0;
+}
+
 static void flush_line(void) {
     int c; while ((c = getchar()) != '\n' && c != EOF);
 }
@@ -849,7 +875,8 @@ static void saved_family_menu(const char* base_api, const char* api_key,
                               const char* xdata_key, const char* x_api_secret,
                               const char* id_token) {
     while (1) {
-        printf("\n=======================================================\n");
+        fx_clear();
+        printf("=======================================================\n");
         printf("         SIMPAN FAMILY CODE\n");
         printf("=======================================================\n");
 
@@ -865,21 +892,26 @@ static void saved_family_menu(const char* base_api, const char* api_key,
             }
         }
         printf("-------------------------------------------------------\n");
-        printf("Pilih nomor untuk beli, 'a' tambah, 'd N' hapus, '00' kembali: ");
+        printf("Perintah:\n");
+        printf("  <nomor>      Beli paket family tersebut\n");
+        printf("  add          Tambah family code baru\n");
+        printf("  del <nomor>  Hapus entry\n");
+        printf("  00           Kembali\n");
+        printf("Pilihan: ");
         fflush(stdout);
 
         char cmd[64]; if (!fgets(cmd, sizeof(cmd), stdin)) { cJSON_Delete(arr); return; }
         cmd[strcspn(cmd, "\n")] = 0;
 
+        int del_n;
         if (strcmp(cmd, "00") == 0 || strcmp(cmd, "99") == 0) { cJSON_Delete(arr); return; }
-        else if (strcmp(cmd, "a") == 0 || strcmp(cmd, "A") == 0) {
+        else if (cmd_eq(cmd, "add", "a")) {
             cJSON_Delete(arr);
             sf_add_entry(base_api, api_key, xdata_key, x_api_secret, id_token);
         }
-        else if ((cmd[0] == 'd' || cmd[0] == 'D') && (cmd[1] == ' ' || cmd[1] == '\0')) {
-            int idx = atoi(cmd + 1);
+        else if ((del_n = cmd_num(cmd, "del", "d")) >= 0) {
             cJSON_Delete(arr);
-            sf_delete_entry(idx);
+            sf_delete_entry(del_n);
             pause_enter();
         }
         else {
@@ -1054,7 +1086,8 @@ static void custom_decoy_menu(const char* base_api, const char* api_key,
                               const char* xdata_key, const char* x_api_secret,
                               const char* id_token) {
     while (1) {
-        printf("\n=======================================================\n");
+        fx_clear();
+        printf("=======================================================\n");
         printf("         CUSTOM DECOY  (tipe kartu: %s)\n", active_subs_type);
         printf("=======================================================\n");
 
@@ -1092,22 +1125,30 @@ static void custom_decoy_menu(const char* base_api, const char* api_key,
         if (aidx == 0) printf("\n (decoy aktif: default bawaan)\n");
 
         printf("-------------------------------------------------------\n");
-        printf("'a' tambah, 'use N' set aktif, 'use 0' pakai default,\n");
-        printf("'d N' hapus, '00' kembali: ");
+        printf("Perintah:\n");
+        printf("  add           Tambah custom decoy baru\n");
+        printf("  use <nomor>   Jadikan entry aktif (decoy ini dipakai saat beli)\n");
+        printf("  use 0         Kembali ke decoy default bawaan\n");
+        printf("  del <nomor>   Hapus entry\n");
+        printf("  00            Kembali\n");
+        printf("Pilihan: ");
         fflush(stdout);
 
         char cmd[64]; if (!fgets(cmd, sizeof(cmd), stdin)) { cJSON_Delete(cfg); return; }
         cmd[strcspn(cmd, "\n")] = 0;
 
+        int del_n;
         if (strcmp(cmd, "00") == 0 || strcmp(cmd, "99") == 0) { cJSON_Delete(cfg); return; }
-        else if (strcmp(cmd, "a") == 0 || strcmp(cmd, "A") == 0) {
+        else if (cmd_eq(cmd, "add", "a")) {
             cJSON_Delete(cfg);
             cd_add(base_api, api_key, xdata_key, x_api_secret, id_token);
         }
-        else if (strncasecmp(cmd, "use ", 4) == 0) {
-            int v = atoi(cmd + 4);
+        else if (strncasecmp(cmd, "use ", 4) == 0 || strncasecmp(cmd, "use\t", 4) == 0) {
+            const char* p = cmd + 3;
+            while (*p == ' ' || *p == '\t') p++;
+            int v = atoi(p);
             int new_active = 0;
-            if (v == 0) new_active = 0;
+            if (strcmp(p, "0") == 0) new_active = 0;
             else if (v >= 1 && v <= nvis) new_active = real_map[v - 1];
             else { printf("[-] Nomor di luar range.\n"); cJSON_Delete(cfg); pause_enter(); continue; }
             cJSON_ReplaceItemInObject(cfg, "active", cJSON_CreateNumber(new_active));
@@ -1120,10 +1161,9 @@ static void custom_decoy_menu(const char* base_api, const char* api_key,
             } else printf("[-] Gagal simpan.\n");
             cJSON_Delete(cfg); pause_enter();
         }
-        else if (strncasecmp(cmd, "d ", 2) == 0) {
-            int v = atoi(cmd + 2);
-            if (v < 1 || v > nvis) { printf("[-] Nomor di luar range.\n"); cJSON_Delete(cfg); pause_enter(); continue; }
-            int real_idx = real_map[v - 1];
+        else if ((del_n = cmd_num(cmd, "del", "d")) >= 0) {
+            if (del_n < 1 || del_n > nvis) { printf("[-] Nomor di luar range.\n"); cJSON_Delete(cfg); pause_enter(); continue; }
+            int real_idx = real_map[del_n - 1];
             cJSON* e = cJSON_GetArrayItem(ents_arr, real_idx - 1);
             const char* nm = json_get_str(e, "name", "?");
             printf("Hapus %s? (y/n): ", nm);
@@ -1242,7 +1282,8 @@ static void custom_hot_menu(const char* base_api, const char* api_key,
                             const char* xdata_key, const char* x_api_secret,
                             const char* id_token) {
     while (1) {
-        printf("\n=======================================================\n");
+        fx_clear();
+        printf("=======================================================\n");
         printf("         CUSTOM PAKET HOT\n");
         printf("=======================================================\n");
 
@@ -1260,25 +1301,29 @@ static void custom_hot_menu(const char* base_api, const char* api_key,
             }
         }
         printf("-------------------------------------------------------\n");
-        printf("'a' tambah, 'd N' hapus, '00' kembali: ");
+        printf("Perintah:\n");
+        printf("  add          Tambah paket HOT baru\n");
+        printf("  del <nomor>  Hapus entry\n");
+        printf("  00           Kembali\n");
+        printf("Pilihan: ");
         fflush(stdout);
 
         char cmd[64]; if (!fgets(cmd, sizeof(cmd), stdin)) { cJSON_Delete(arr); return; }
         cmd[strcspn(cmd, "\n")] = 0;
 
+        int del_n;
         if (strcmp(cmd, "00") == 0 || strcmp(cmd, "99") == 0) { cJSON_Delete(arr); return; }
-        else if (strcmp(cmd, "a") == 0 || strcmp(cmd, "A") == 0) {
+        else if (cmd_eq(cmd, "add", "a")) {
             cJSON_Delete(arr);
             ch_add(base_api, api_key, xdata_key, x_api_secret, id_token);
         }
-        else if (strncasecmp(cmd, "d ", 2) == 0) {
-            int v = atoi(cmd + 2);
-            if (v < 1 || v > n) { printf("[-] Nomor di luar range.\n"); cJSON_Delete(arr); pause_enter(); continue; }
-            cJSON* e = cJSON_GetArrayItem(arr, v - 1);
+        else if ((del_n = cmd_num(cmd, "del", "d")) >= 0) {
+            if (del_n < 1 || del_n > n) { printf("[-] Nomor di luar range.\n"); cJSON_Delete(arr); pause_enter(); continue; }
+            cJSON* e = cJSON_GetArrayItem(arr, del_n - 1);
             const char* nm = json_get_str(e, "option_name", "?");
             printf("Hapus %s? (y/n): ", nm);
             if (read_yn("")) {
-                cJSON_DeleteItemFromArray(arr, v - 1);
+                cJSON_DeleteItemFromArray(arr, del_n - 1);
                 if (ch_save(arr) == 0) printf("[+] Dihapus.\n");
                 else                   printf("[-] Gagal simpan.\n");
             }
@@ -1301,14 +1346,18 @@ void show_features_menu(const char* base_api, const char* api_key,
                         const char* my_msisdn) {
     if (!id_token || !id_token[0]) { printf("[-] Belum login.\n"); return; }
     while (1) {
-        printf("\n=== FITUR LANJUTAN ===\n"
-               "1. Circle\n"
+        fx_clear();
+        printf("=======================================================\n");
+        printf("         FITUR LANJUTAN\n");
+        printf("=======================================================\n");
+        printf("1. Circle\n"
                "2. Family Plan/Akrab Organizer\n"
                "3. Transfer Pulsa\n"
                "4. Simpan Family Code\n"
                "5. Custom Decoy\n"
                "6. Custom Paket HOT\n"
                "7. Auto Buy\n"
+               "-------------------------------------------------------\n"
                "00. Kembali\n"
                "99. Menu utama\n"
                "Pilihan: ");

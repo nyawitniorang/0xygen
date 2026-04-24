@@ -1,7 +1,8 @@
 CC ?= gcc
 CFLAGS  += -Wall -Wextra -Wformat -Wformat-security -Wno-unused-parameter -Wno-missing-field-initializers \
            -Os -fstack-protector-strong -Iinclude
-CPPFLAGS += -D_GNU_SOURCE -D_FORTIFY_SOURCE=2
+ENGSEL_VERSION ?= 1.0.0
+CPPFLAGS += -D_GNU_SOURCE -D_FORTIFY_SOURCE=2 -DENGSEL_VERSION=\"$(ENGSEL_VERSION)\"
 LDFLAGS += -lssl -lcrypto -lcurl -lm -lqrencode
 
 SRC    := $(shell find src -name "*.c")

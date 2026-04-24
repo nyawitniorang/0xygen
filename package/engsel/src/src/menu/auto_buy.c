@@ -34,6 +34,8 @@
 #include "../include/util/json_util.h"
 #include "../include/util/file_util.h"
 
+static void ab_clear(void) { printf("\033[H\033[J"); fflush(stdout); }
+
 /* Helper input (duplicate dari menu lain yang static). */
 static void pause_enter(void) {
     printf("Tekan Enter untuk melanjutkan...");
@@ -758,7 +760,8 @@ void auto_buy_menu(const char* base_api, const char* api_key,
                    const char* enc_field_key, const char* id_token) {
     (void)enc_field_key;
     while (1) {
-        printf("\n=======================================================\n");
+        ab_clear();
+        printf("=======================================================\n");
         printf("         AUTO BUY\n");
         printf("=======================================================\n");
         ab_print_status();
@@ -783,38 +786,44 @@ void auto_buy_menu(const char* base_api, const char* api_key,
         }
 
         printf("-------------------------------------------------------\n");
-        printf("'a' tambah, 'd N' hapus, 't N' toggle on/off,\n");
-        printf("'start' jalankan worker foreground (Ctrl+C untuk stop),\n");
-        printf("'stop' matikan worker background, 'log' tail 20 baris,\n");
-        printf("'00' kembali: ");
+        printf("Perintah:\n");
+        printf("  add             Tambah entry baru\n");
+        printf("  del <nomor>     Hapus entry\n");
+        printf("  toggle <nomor>  Aktifkan/nonaktifkan entry\n");
+        printf("  start           Jalankan worker di foreground (Ctrl+C untuk stop)\n");
+        printf("  stop            Matikan worker yang jalan background\n");
+        printf("  log             Tampilkan 20 baris log terakhir\n");
+        printf("  00              Kembali\n");
+        printf("Pilihan: ");
         fflush(stdout);
 
         char cmd[64]; if (!fgets(cmd, sizeof(cmd), stdin)) { cJSON_Delete(arr); return; }
         cmd[strcspn(cmd, "\n")] = 0;
 
+        int num_arg;
         if (strcmp(cmd, "00") == 0 || strcmp(cmd, "99") == 0) { cJSON_Delete(arr); return; }
-        else if (strcmp(cmd, "a") == 0 || strcmp(cmd, "A") == 0) {
+        else if (strcasecmp(cmd, "add") == 0 || strcasecmp(cmd, "a") == 0) {
             cJSON_Delete(arr);
             ab_add(base_api, api_key, xdata_key, x_api_secret, id_token);
         }
-        else if (strncasecmp(cmd, "d ", 2) == 0) {
-            int v = atoi(cmd + 2);
-            if (v < 1 || v > n) { printf("[-] Nomor di luar range.\n"); cJSON_Delete(arr); pause_enter(); continue; }
-            cJSON* e = cJSON_GetArrayItem(arr, v - 1);
+        else if ((strncasecmp(cmd, "del ", 4) == 0 && (num_arg = atoi(cmd + 4)) >= 0) ||
+                 (strncasecmp(cmd, "d ",   2) == 0 && (num_arg = atoi(cmd + 2)) >= 0)) {
+            if (num_arg < 1 || num_arg > n) { printf("[-] Nomor di luar range.\n"); cJSON_Delete(arr); pause_enter(); continue; }
+            cJSON* e = cJSON_GetArrayItem(arr, num_arg - 1);
             char* nm = strdup(json_get_str(e, "name", "?"));
-            cJSON_DeleteItemFromArray(arr, v - 1);
+            cJSON_DeleteItemFromArray(arr, num_arg - 1);
             if (ab_save(arr) == 0) printf("[+] Dihapus: %s\n", nm ? nm : "?");
             else                   printf("[-] Gagal simpan.\n");
             free(nm);
             cJSON_Delete(arr); pause_enter();
         }
-        else if (strncasecmp(cmd, "t ", 2) == 0) {
-            int v = atoi(cmd + 2);
-            if (v < 1 || v > n) { printf("[-] Nomor di luar range.\n"); cJSON_Delete(arr); pause_enter(); continue; }
-            cJSON* e = cJSON_GetArrayItem(arr, v - 1);
+        else if ((strncasecmp(cmd, "toggle ", 7) == 0 && (num_arg = atoi(cmd + 7)) >= 0) ||
+                 (strncasecmp(cmd, "t ",      2) == 0 && (num_arg = atoi(cmd + 2)) >= 0)) {
+            if (num_arg < 1 || num_arg > n) { printf("[-] Nomor di luar range.\n"); cJSON_Delete(arr); pause_enter(); continue; }
+            cJSON* e = cJSON_GetArrayItem(arr, num_arg - 1);
             int enabled = cJSON_IsTrue(cJSON_GetObjectItem(e, "enabled"));
             cJSON_ReplaceItemInObject(e, "enabled", cJSON_CreateBool(!enabled));
-            if (ab_save(arr) == 0) printf("[+] Entry %d: %s\n", v, !enabled ? "ON" : "OFF");
+            if (ab_save(arr) == 0) printf("[+] Entry %d: %s\n", num_arg, !enabled ? "ON" : "OFF");
             else                   printf("[-] Gagal simpan.\n");
             cJSON_Delete(arr); pause_enter();
         }
