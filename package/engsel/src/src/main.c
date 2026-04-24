@@ -18,6 +18,7 @@
 #include "../include/menu/purchase_flow.h"
 #include "../include/menu/auto_buy.h"
 #include "../include/util/nav.h"
+#include "../include/util/html2text.h"
 
 int active_account_idx = 0;
 double active_number = 0;
@@ -455,9 +456,13 @@ void print_package_details(cJSON* d_data, const char* f_code, const char* opt_co
 
     cJSON* tnc_item = cJSON_GetObjectItem(p_opt, "tnc");
     if (tnc_item && cJSON_IsString(tnc_item)) {
-        char* clean_tnc = malloc(strlen(tnc_item->valuestring) + 1);
-        clean_html_tags(clean_tnc, tnc_item->valuestring);
-        printf("SnK MyXL:\n%s\n", clean_tnc); free(clean_tnc);
+        /* html_to_text handle entities (&nbsp;, &amp;, &lt;, &gt;, &quot;, &#39;)
+         * dan tag umum (<br>, <li>, <p>, <ul>, <ol>, <div>). */
+        char* clean_tnc = html_to_text(tnc_item->valuestring);
+        if (clean_tnc) {
+            printf("SnK MyXL:\n%s\n", clean_tnc);
+            free(clean_tnc);
+        }
     }
     printf("-------------------------------------------------------\n");
 }
@@ -473,12 +478,20 @@ static int read_int_input(const char* prompt) {
 
 int purchase_flow_by_family_code(const char* f_code); /* forward */
 
-void handle_payment_menu(const char* B_CIAM, const char* B_API, const char* B_AUTH, const char* UA, const char* API_KEY, const char* XDATA_KEY, const char* X_API_SEC, const char* ENC_FIELD_KEY, cJSON* tokens_arr, const char* opt_code, int price, const char* name, const char* conf, const char* p_for, const char* family_code, cJSON* bm_info, int* goto_main_flag) {
+void handle_payment_menu(const char* B_CIAM, const char* B_API, const char* B_AUTH, const char* UA, const char* API_KEY, const char* XDATA_KEY, const char* X_API_SEC, const char* ENC_FIELD_KEY, cJSON* tokens_arr, const char* opt_code, int price, const char* name, const char* conf, const char* p_for, const char* family_code, cJSON* bm_info, cJSON* d_data, int* goto_main_flag) {
     while (1) {
         /* Auto-refresh bearer sebelum user pilih metode — melindungi dari
          * REQUEST_MISSING_BEARER di tengah pembelian. */
         ensure_token_fresh(tokens_arr, B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC);
         if (!is_logged_in) { printf("[-] Sesi habis. Login ulang.\n"); break; }
+
+        /* Layar bersih tiap iterasi: hanya detail paket + pilihan metode yang
+         * terlihat. Cegah output bertumpuk setelah status transaksi dicetak. */
+        clear_screen();
+        if (d_data) {
+            print_package_details(d_data, family_code ? family_code : "",
+                                  opt_code, B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
+        }
 
         printf("Pilih Metode:\n1. Beli dengan Pulsa Biasa\n2. Beli dengan Pulsa + Decoy (Bypass / Prio Pass)\n3. Pulsa N kali\n4. E-Wallet (DANA/ShopeePay/GoPay/OVO)\n5. QRIS\n");
         if (family_code && family_code[0]) printf("F. Lihat semua paket dalam family\n");
@@ -778,17 +791,12 @@ int purchase_flow_by_option_code(const char* option_code) {
     const char* p_for = p_fam ? json_get_str(p_fam, "payment_for", "BUY_PACKAGE") : "BUY_PACKAGE";
     const char* f_code = p_fam ? json_get_str(p_fam, "package_family_code", "") : "";
 
-    clear_screen();
-    printf("=======================================================\n");
-    printf("  Detail Paket\n");
-    printf("=======================================================\n");
-    print_package_details(d_data, f_code, option_code, B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
-
+    /* handle_payment_menu akan clear + print_package_details tiap iterasi. */
     int goto_main = 0;
     handle_payment_menu(B_CIAM, B_API, B_AUTH, UA_,
                         API_KEY, XDATA_KEY, X_API_SEC, ENC_FIELD,
                         g_tokens_arr, option_code, price, name, conf, p_for,
-                        f_code, NULL, &goto_main);
+                        f_code, NULL, d_data, &goto_main);
 
     cJSON_Delete(d_res);
     if (goto_main) nav_trigger_goto_main();
@@ -939,11 +947,9 @@ int purchase_flow_by_family_code(const char* f_code_in) {
                     cJSON* p_for_item = cJSON_GetObjectItem(p_fam, "payment_for");
                     const char* p_for = (p_for_item && p_for_item->valuestring) ? p_for_item->valuestring : "BUY_PACKAGE";
 
-                    print_package_details(d_data, f_code, codes[sel], B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
-
                     handle_payment_menu(B_CIAM, B_API, B_AUTH, UA_, API_KEY, XDATA_KEY, X_API_SEC, ENC_FIELD,
                                         g_tokens_arr, codes[sel], price, name, conf, p_for,
-                                        f_code, bm_infos[sel], &goto_main);
+                                        f_code, bm_infos[sel], d_data, &goto_main);
                 } else {
                     printf("[-] Gagal mengambil detail paket.\n");
                     printf("\nTekan Enter untuk melanjutkan..."); fflush(stdout); flush_stdin();
@@ -1597,8 +1603,6 @@ int main(int argc, char** argv) {
                             cJSON* d_res = get_package_detail(B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok, active_pkgs[sel_idx].quota_code);
                             if (d_res && cJSON_GetObjectItem(d_res, "data")) {
                                 cJSON* d_data = cJSON_GetObjectItem(d_res, "data");
-                                print_package_details(d_data, active_pkgs[sel_idx].family_code, active_pkgs[sel_idx].quota_code, B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
-                                
                                 cJSON* p_opt = cJSON_GetObjectItem(d_data, "package_option");
                                 cJSON* price_item = cJSON_GetObjectItem(p_opt, "price");
                                 int price = price_item ? (cJSON_IsNumber(price_item) ? price_item->valueint : atoi(price_item->valuestring)) : 0;
@@ -1609,7 +1613,7 @@ int main(int argc, char** argv) {
                                 const char* p_for = (p_for_item && p_for_item->valuestring) ? p_for_item->valuestring : "BUY_PACKAGE";
 
                                 const char* f_code_det = p_fam ? json_get_str(p_fam, "package_family_code", "") : "";
-                                handle_payment_menu(B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC, ENC_FIELD_KEY, tokens_arr, active_pkgs[sel_idx].quota_code, price, name, conf, p_for, f_code_det, NULL, &goto_main);
+                                handle_payment_menu(B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC, ENC_FIELD_KEY, tokens_arr, active_pkgs[sel_idx].quota_code, price, name, conf, p_for, f_code_det, NULL, d_data, &goto_main);
                             } else {
                                 printf("[-] Gagal mengambil detail paket.\n");
                                 printf("\nTekan Enter untuk melanjutkan..."); fflush(stdout); flush_stdin();
@@ -1699,9 +1703,7 @@ int main(int argc, char** argv) {
                                         cJSON* name_node = cJSON_GetObjectItem(p_opt, "name"); const char* name = (name_node && cJSON_IsString(name_node)) ? name_node->valuestring : ""; cJSON* conf_node = cJSON_GetObjectItem(d_data, "token_confirmation"); const char* conf = (conf_node && cJSON_IsString(conf_node)) ? conf_node->valuestring : "";
                                         cJSON* p_for_item = cJSON_GetObjectItem(p_fam, "payment_for"); const char* p_for = (p_for_item && p_for_item->valuestring) ? p_for_item->valuestring : "BUY_PACKAGE";
 
-                                        print_package_details(d_data, f_code, target_opt_code, B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
-                                        
-                                        handle_payment_menu(B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC, ENC_FIELD_KEY, tokens_arr, target_opt_code, price, name, conf, p_for, f_code, selected_bm, &goto_main);
+                                        handle_payment_menu(B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC, ENC_FIELD_KEY, tokens_arr, target_opt_code, price, name, conf, p_for, f_code, selected_bm, d_data, &goto_main);
                                     } else {
                                         printf("[-] Gagal mengambil detail paket.\n");
                                         printf("\nTekan Enter untuk melanjutkan..."); fflush(stdout); flush_stdin();
@@ -2190,9 +2192,8 @@ int main(int argc, char** argv) {
                 cJSON* bm_pfor_i   = cJSON_GetObjectItem(bm_pfam, "payment_for");
                 const char* bm_pfor= (bm_pfor_i && bm_pfor_i->valuestring) ? bm_pfor_i->valuestring : "BUY_PACKAGE";
 
-                print_package_details(bm_ddata, bm_fcode, bm_opt_code, B_API, API_KEY, XDATA_KEY, X_API_SEC, id_tok);
                 handle_payment_menu(B_CIAM, B_API, B_AUTH, UA, API_KEY, XDATA_KEY, X_API_SEC, ENC_FIELD_KEY,
-                    tokens_arr, bm_opt_code, bm_price, bm_name, bm_conf, bm_pfor, bm_fcode, selected_bm, &goto_main);
+                    tokens_arr, bm_opt_code, bm_price, bm_name, bm_conf, bm_pfor, bm_fcode, selected_bm, bm_ddata, &goto_main);
 
                 if (bm_dres) cJSON_Delete(bm_dres);
                 cJSON_Delete(bm_fam);

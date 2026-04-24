@@ -121,6 +121,7 @@ static void circle_bonus_menu(const char* base, const char* api_key,
                               const char* id_token,
                               const char* parent_subs_id, const char* family_id) {
     while (1) {
+        fx_clear();
         cJSON* res = circle_get_bonus_list(base, api_key, xdata_key, sec,
                                            id_token, parent_subs_id, family_id);
         if (!json_status_is_success(res)) {
