@@ -960,10 +960,181 @@ int purchase_flow_by_family_code(const char* f_code_in) {
     return goto_main;
 }
 
+#ifndef ENGSEL_VERSION
+#define ENGSEL_VERSION "dev"
+#endif
+
+static void cli_print_version(void) {
+    printf("engsel %s\n", ENGSEL_VERSION);
+}
+
+static void cli_print_help(const char* argv0) {
+    printf(
+"engsel %s - CLI MyXL (OpenWrt)\n"
+"\n"
+"Pemakaian:\n"
+"  %s                      Jalankan menu interaktif (default)\n"
+"  %s --help               Tampilkan bantuan ini\n"
+"  %s --version            Tampilkan versi binary\n"
+"\n"
+"Background worker:\n"
+"  %s --auto-buy           Jalankan worker Auto Buy (foreground; dipakai\n"
+"                              procd/init agar berjalan di background)\n"
+"\n"
+"Perintah listing (tidak butuh login):\n"
+"  %s --list-account       Daftar akun yang tersimpan di refresh-tokens.json\n"
+"  %s --list-autobuy       Daftar entry Auto Buy aktif\n"
+"  %s --list-decoy         Daftar Custom Decoy tersimpan\n"
+"  %s --list-family        Daftar Family Code tersimpan\n"
+"  %s --list-hot           Daftar paket HOT (hot_data/hot.json)\n"
+"\n"
+"Panduan menu interaktif:\n"
+"  Menu utama\n"
+"    1  Login / Ganti akun     2  Lihat paket saya\n"
+"    3  Beli paket HOT          4  Beli by option code manual\n"
+"    5  Beli by family code     6  Beli semua di family (loop)\n"
+"    7  Beli paket di XL Store  8  Fitur Lanjutan (sub-menu)\n"
+"    9  Riwayat transaksi       N  Notifikasi\n"
+"    R  Registrasi kartu        V  Validate MSISDN\n"
+"    00 Bookmark paket          99 Keluar\n"
+"\n"
+"  Fitur Lanjutan (menu 8)\n"
+"    1  Circle                  2  Family Plan / Akrab Organizer\n"
+"    3  Transfer Pulsa          4  Simpan Family Code\n"
+"    5  Custom Decoy            6  Custom Paket HOT\n"
+"    7  Auto Buy\n"
+"\n"
+"  Aksi di sub-menu (Simpan Family / Custom Decoy / Custom HOT / Auto Buy)\n"
+"    add                       Tambah entry baru\n"
+"    del <n>                   Hapus entry ke-n\n"
+"    toggle <n>                Aktifkan/nonaktifkan entry ke-n (Auto Buy)\n"
+"    use <n>                   Jadikan entry aktif (Custom Decoy)\n"
+"    reset                     Kembalikan ke bawaan (Custom HOT)\n"
+"    start / stop              Jalankan/matikan worker (Auto Buy)\n"
+"    log                       Tail log terakhir (Auto Buy)\n"
+"    00                        Kembali ke menu sebelumnya\n"
+"    99                        Kembali ke menu utama\n"
+"\n"
+"File konfigurasi:\n"
+"  /etc/engsel/.env                     kredensial API (API_KEY, dll)\n"
+"  /etc/engsel/refresh-tokens.json      sesi login multi-akun\n"
+"  /etc/engsel/bookmark.json            paket yang di-bookmark\n"
+"  /etc/engsel/family_bookmark.json     daftar Simpan Family Code\n"
+"  /etc/engsel/custom_decoy.json        daftar Custom Decoy\n"
+"  /etc/engsel/auto_buy.json            entry Auto Buy\n"
+"  /etc/engsel/hot_data/hot.json        paket HOT\n"
+"  /etc/engsel/decoy_data/*.json        decoy default per tipe kartu\n"
+"\n"
+"File runtime (Auto Buy):\n"
+"  /var/run/engsel-autobuy.pid\n"
+"  /var/run/engsel-autobuy.state\n"
+"  /var/log/engsel-autobuy.log\n"
+"\n"
+"Opsi lingkungan:\n"
+"  ENGSEL_DEBUG=1            tampilkan detail signature ax-api (diagnostik)\n",
+        ENGSEL_VERSION, argv0, argv0, argv0, argv0,
+        argv0, argv0, argv0, argv0, argv0);
+}
+
+static void cli_list_account(void) {
+    char* raw = file_read_all("/etc/engsel/refresh-tokens.json", NULL);
+    if (!raw) { printf("(belum ada akun tersimpan)\n"); return; }
+    sanitize_json_string(raw);
+    cJSON* arr = cJSON_Parse(raw); free(raw);
+    if (!arr || !cJSON_IsArray(arr)) { printf("(format refresh-tokens.json rusak)\n"); cJSON_Delete(arr); return; }
+    int n = cJSON_GetArraySize(arr);
+    if (n == 0) { printf("(belum ada akun tersimpan)\n"); cJSON_Delete(arr); return; }
+    printf("No. Nomor          Type         Status\n");
+    for (int i = 0; i < n; i++) {
+        cJSON* a = cJSON_GetArrayItem(arr, i);
+        const char* num  = json_get_str(a, "number", "?");
+        const char* type = json_get_str(a, "type", "");
+        cJSON* active    = cJSON_GetObjectItem(a, "active");
+        int is_active    = active && cJSON_IsTrue(active);
+        printf("%2d. %-14s %-12s %s\n", i + 1, num, type[0]?type:"-",
+               is_active ? "(active)" : "");
+    }
+    cJSON_Delete(arr);
+}
+
+static void cli_list_json_array_field(const char* path, const char* label,
+                                       const char* const* fields, int nfields) {
+    char* raw = file_read_all(path, NULL);
+    if (!raw) { printf("(%s belum ada: %s)\n", label, path); return; }
+    sanitize_json_string(raw);
+    cJSON* arr = cJSON_Parse(raw); free(raw);
+    if (!arr) { printf("(format %s rusak)\n", label); return; }
+    /* Beberapa file berbentuk { active, entries: [...] } */
+    cJSON* iter = cJSON_IsArray(arr) ? arr : cJSON_GetObjectItem(arr, "entries");
+    if (!iter || !cJSON_IsArray(iter)) {
+        printf("(format %s bukan array)\n", label); cJSON_Delete(arr); return;
+    }
+    int n = cJSON_GetArraySize(iter);
+    if (n == 0) { printf("(%s kosong)\n", label); cJSON_Delete(arr); return; }
+    for (int i = 0; i < n; i++) {
+        cJSON* e = cJSON_GetArrayItem(iter, i);
+        printf("%2d.", i + 1);
+        for (int f = 0; f < nfields; f++) {
+            const char* v = json_get_str(e, fields[f], "");
+            if (v && v[0]) printf(" %s=%s", fields[f], v);
+        }
+        printf("\n");
+    }
+    cJSON_Delete(arr);
+}
+
+static void cli_list_autobuy(void) {
+    const char* f[] = {"name", "family_code", "option_code", "payment_method",
+                       "interval_sec", "threshold_mb", "enabled"};
+    cli_list_json_array_field("/etc/engsel/auto_buy.json", "auto_buy",
+                               f, (int)(sizeof(f)/sizeof(f[0])));
+}
+
+static void cli_list_decoy(void) {
+    const char* f[] = {"subs_type", "name", "family_code", "variant_code"};
+    cli_list_json_array_field("/etc/engsel/custom_decoy.json", "custom_decoy",
+                               f, (int)(sizeof(f)/sizeof(f[0])));
+}
+
+static void cli_list_family(void) {
+    const char* f[] = {"name", "family_code", "migration_type"};
+    cli_list_json_array_field("/etc/engsel/family_bookmark.json", "family_bookmark",
+                               f, (int)(sizeof(f)/sizeof(f[0])));
+}
+
+static void cli_list_hot(void) {
+    const char* f[] = {"family_name", "option_name", "family_code",
+                       "variant_name", "order"};
+    cli_list_json_array_field("/etc/engsel/hot_data/hot.json", "hot",
+                               f, (int)(sizeof(f)/sizeof(f[0])));
+}
+
 int main(int argc, char** argv) {
     int auto_buy_mode = 0;
+
+    /* Opsi yang tidak butuh init http/.env: tangani lebih awal */
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--auto-buy") == 0) auto_buy_mode = 1;
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            cli_print_help(argv[0]); return 0;
+        }
+        if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-V") == 0) {
+            cli_print_version(); return 0;
+        }
+    }
+
+    /* Flag listing butuh parser JSON tapi tidak butuh http; cukup parse saja */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--list-account") == 0) { cli_list_account(); return 0; }
+        if (strcmp(argv[i], "--list-autobuy") == 0) { cli_list_autobuy(); return 0; }
+        if (strcmp(argv[i], "--list-decoy")   == 0) { cli_list_decoy();   return 0; }
+        if (strcmp(argv[i], "--list-family")  == 0) { cli_list_family();  return 0; }
+        if (strcmp(argv[i], "--list-hot")     == 0) { cli_list_hot();     return 0; }
+        if (strcmp(argv[i], "--auto-buy")     == 0) auto_buy_mode = 1;
+        else if (argv[i][0] == '-') {
+            fprintf(stderr, "engsel: opsi tidak dikenal: %s\n"
+                            "Coba '%s --help'.\n", argv[i], argv[0]);
+            return 2;
+        }
     }
 
     http_client_init();
