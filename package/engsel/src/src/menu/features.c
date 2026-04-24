@@ -11,6 +11,7 @@
 #include "../include/client/redeem.h"
 #include "../include/service/crypto_aes.h"
 #include "../include/util/json_util.h"
+#include "../include/util/phone.h"
 
 /* ---------------------------------------------------------------------------
  * Helper utilities
@@ -36,6 +37,16 @@ static void read_line(const char* prompt, char* buf, size_t n) {
 static int read_yn(const char* prompt) {
     char b[8]; read_line(prompt, b, sizeof(b));
     return (b[0] == 'y' || b[0] == 'Y');
+}
+
+static void read_msisdn(const char* prompt, char* buf, size_t n) {
+    read_line(prompt, buf, n);
+    if (!buf[0]) return;
+    char* norm = normalize_msisdn(buf);
+    if (norm) {
+        snprintf(buf, n, "%s", norm);
+        free(norm);
+    }
 }
 
 static void format_quota(long long bytes, char* out, size_t n) {
@@ -116,7 +127,7 @@ static void circle_creation(const char* base, const char* api_key,
     printf("\n=== Create Circle ===\n");
     read_line("Nama Anda (Parent): ", pname, sizeof(pname));
     read_line("Nama Circle: ", gname, sizeof(gname));
-    read_line("MSISDN anggota awal (62xxxx): ", mmsisdn, sizeof(mmsisdn));
+    read_msisdn("MSISDN anggota awal (08/62xxxx): ", mmsisdn, sizeof(mmsisdn));
     read_line("Nama anggota awal: ", mname, sizeof(mname));
     cJSON* res = circle_create_group(base, api_key, xdata_key, sec, enc_field_key,
                                      id_token, access_token, pname, gname, mmsisdn, mname);
@@ -243,7 +254,7 @@ static void circle_info_menu(const char* base, const char* api_key,
         }
         else if (strcmp(ch, "1") == 0) {
             char inv_m[32], inv_n[64];
-            read_line("MSISDN (62xxxx): ", inv_m, sizeof(inv_m));
+            read_msisdn("MSISDN (08/62xxxx): ", inv_m, sizeof(inv_m));
             cJSON* v = circle_validate_member(base, api_key, xdata_key, sec,
                                               enc_field_key, id_token, inv_m);
             if (json_status_is_success(v)) {
@@ -378,7 +389,7 @@ static void famplan_menu(const char* base, const char* api_key,
         else if (strcmp(ch, "1") == 0) {
             char sb[8], tm[32], pa[64], ca[64];
             read_line("Slot: ", sb, sizeof(sb));
-            read_line("MSISDN baru (62xxxx): ", tm, sizeof(tm));
+            read_msisdn("MSISDN baru (08/62xxxx): ", tm, sizeof(tm));
             read_line("Alias Anda: ", pa, sizeof(pa));
             read_line("Alias anggota: ", ca, sizeof(ca));
             int slot_idx = atoi(sb);
@@ -542,7 +553,7 @@ static void redeem_allotment_flow(const char* base, const char* api_key,
     char code[128], nm[128], dst[32], tokc[256];
     read_line("Item code: ", code, sizeof(code));
     read_line("Item name: ", nm, sizeof(nm));
-    read_line("Destination MSISDN: ", dst, sizeof(dst));
+    read_msisdn("Destination MSISDN (08/62xxxx): ", dst, sizeof(dst));
     read_line("Token confirmation: ", tokc, sizeof(tokc));
     long ts = (long)time(NULL);
     cJSON* r = redeem_bounty_allotment(base, api_key, xdata_key, sec, id_token,

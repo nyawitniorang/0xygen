@@ -43,10 +43,14 @@ typedef struct {
 
 /* ===== 1. Family List ===== */
 
+static void clear_screen_local(void) { printf("\033[H\033[J"); fflush(stdout); }
+
 void show_store_family_list_browse(const char* base, const char* key,
                                    const char* xdata, const char* sec,
                                    const char* id_token, const char* subs_type) {
     while (1) {
+        clear_screen_local();
+        rule('='); printf("  Store > Family List\n"); rule('=');
         printf("Fetching family list...\n");
         cJSON* res = store_get_family_list(base, key, xdata, sec, id_token,
                                            subs_type ? subs_type : "PREPAID", 0);
@@ -58,7 +62,9 @@ void show_store_family_list_browse(const char* base, const char* key,
         cJSON* data = cJSON_GetObjectItemCaseSensitive(res, "data");
         cJSON* list = data ? cJSON_GetObjectItemCaseSensitive(data, "results") : NULL;
         int n = cJSON_IsArray(list) ? cJSON_GetArraySize(list) : 0;
-        rule('='); printf("Family List\n"); rule('=');
+
+        clear_screen_local();
+        rule('='); printf("  Store > Family List\n"); rule('=');
         for (int i = 0; i < n; i++) {
             cJSON* f = cJSON_GetArrayItem(list, i);
             printf("%d. %s\n   Family code: %s\n", i + 1,
@@ -66,17 +72,23 @@ void show_store_family_list_browse(const char* base, const char* key,
                    json_get_str(f, "id", "N/A"));
             rule('-');
         }
-        printf("00. Kembali\nPilih nomor family untuk copy family_code (lalu pakai menu 4): ");
+        printf("00. Kembali\n99. Menu utama\n"
+               "Pilih nomor family untuk browse & beli paket: ");
         fflush(stdout);
         char ch[16]; if (!fgets(ch, sizeof(ch), stdin)) { cJSON_Delete(res); return; }
         ch[strcspn(ch, "\n")] = 0;
         if (strcmp(ch, "00") == 0) { cJSON_Delete(res); return; }
+        if (strcmp(ch, "99") == 0) { cJSON_Delete(res); return; }
         int sel = atoi(ch);
         if (sel > 0 && sel <= n) {
             cJSON* f = cJSON_GetArrayItem(list, sel - 1);
-            printf("\nFamily Code: %s\n", json_get_str(f, "id", ""));
-            printf("Gunakan menu 4 (Beli by Family Code) untuk browse & beli.\n");
-            pause_enter();
+            const char* fc = json_get_str(f, "id", "");
+            cJSON_Delete(res);
+            if (fc && fc[0]) {
+                int goto_main = purchase_flow_by_family_code(fc);
+                if (goto_main) return;
+            }
+            continue;
         }
         cJSON_Delete(res);
     }
@@ -88,6 +100,8 @@ void show_store_packages_browse(const char* base, const char* key,
                                 const char* xdata, const char* sec,
                                 const char* id_token, const char* subs_type) {
     while (1) {
+        clear_screen_local();
+        rule('='); printf("  Store > Packages (Search v9)\n"); rule('=');
         printf("Fetching store packages...\n");
         cJSON* res = store_get_packages(base, key, xdata, sec, id_token,
                                         subs_type ? subs_type : "PREPAID", 0);
@@ -99,7 +113,8 @@ void show_store_packages_browse(const char* base, const char* key,
         cJSON* data = cJSON_GetObjectItemCaseSensitive(res, "data");
         cJSON* list = data ? cJSON_GetObjectItemCaseSensitive(data, "results_price_only") : NULL;
         int n = cJSON_IsArray(list) ? cJSON_GetArraySize(list) : 0;
-        rule('='); printf("Store Packages\n"); rule('=');
+        clear_screen_local();
+        rule('='); printf("  Store > Packages (Search v9)\n"); rule('=');
 
         StoreItem* items = (StoreItem*)calloc((size_t)n + 1, sizeof(StoreItem));
         if (!items) { printf("[-] OOM.\n"); cJSON_Delete(res); return; }
@@ -119,10 +134,10 @@ void show_store_packages_browse(const char* base, const char* key,
             printf("   Validity: %s\n", json_get_str(p, "validity", "N/A"));
             rule('-');
         }
-        printf("00. Kembali\nPilih nomor paket: "); fflush(stdout);
+        printf("00. Kembali\n99. Menu utama\nPilih nomor paket: "); fflush(stdout);
         char ch[16]; if (!fgets(ch, sizeof(ch), stdin)) { free(items); cJSON_Delete(res); return; }
         ch[strcspn(ch, "\n")] = 0;
-        if (strcmp(ch, "00") == 0) { free(items); cJSON_Delete(res); return; }
+        if (strcmp(ch, "00") == 0 || strcmp(ch, "99") == 0) { free(items); cJSON_Delete(res); return; }
         int sel = atoi(ch);
         if (sel > 0 && sel <= n) {
             const char* at = items[sel - 1].action_type;
@@ -145,6 +160,8 @@ void show_store_segments_browse(const char* base, const char* key,
                                 const char* xdata, const char* sec,
                                 const char* id_token) {
     while (1) {
+        clear_screen_local();
+        rule('='); printf("  Store > Segments\n"); rule('=');
         printf("Fetching store segments...\n");
         cJSON* res = store_get_segments(base, key, xdata, sec, id_token, 0);
         if (!json_status_is_success(res)) {
@@ -156,7 +173,8 @@ void show_store_segments_browse(const char* base, const char* key,
         cJSON* segs = data ? cJSON_GetObjectItemCaseSensitive(data, "store_segments") : NULL;
         int ns = cJSON_IsArray(segs) ? cJSON_GetArraySize(segs) : 0;
 
-        rule('='); printf("Store Segments\n"); rule('=');
+        clear_screen_local();
+        rule('='); printf("  Store > Segments\n"); rule('=');
         /* Alokasi untuk max 26 x 32 = ~832 items */
         StoreItem* items = (StoreItem*)calloc(26 * 32, sizeof(StoreItem));
         if (!items) { printf("[-] OOM.\n"); cJSON_Delete(res); return; }
@@ -199,9 +217,7 @@ void show_store_segments_browse(const char* base, const char* key,
                 if (strcmp(items[i].action_type, "PDP") == 0 && items[i].action_param[0]) {
                     purchase_flow_by_option_code(items[i].action_param);
                 } else if (strcmp(items[i].action_type, "PLP") == 0) {
-                    printf("\nFamily code: %s — gunakan menu 4 untuk browse & beli.\n",
-                           items[i].action_param);
-                    pause_enter();
+                    purchase_flow_by_family_code(items[i].action_param);
                 } else {
                     printf("Action type %s belum didukung. Param: %s\n",
                            items[i].action_type, items[i].action_param);
@@ -222,6 +238,8 @@ void show_redeemables_browse(const char* base, const char* key,
                              const char* xdata, const char* sec,
                              const char* id_token) {
     while (1) {
+        clear_screen_local();
+        rule('='); printf("  Store > Redeemables\n"); rule('=');
         printf("Fetching redeemables...\n");
         cJSON* res = store_get_redeemables(base, key, xdata, sec, id_token, 0);
         if (!json_status_is_success(res)) {
@@ -232,7 +250,8 @@ void show_redeemables_browse(const char* base, const char* key,
         cJSON* data = cJSON_GetObjectItemCaseSensitive(res, "data");
         cJSON* cats = data ? cJSON_GetObjectItemCaseSensitive(data, "categories") : NULL;
         int nc = cJSON_IsArray(cats) ? cJSON_GetArraySize(cats) : 0;
-        rule('='); printf("Redeemables\n"); rule('=');
+        clear_screen_local();
+        rule('='); printf("  Store > Redeemables\n"); rule('=');
 
         StoreItem* items = (StoreItem*)calloc(26 * 32, sizeof(StoreItem));
         if (!items) { printf("[-] OOM.\n"); cJSON_Delete(res); return; }
@@ -266,10 +285,10 @@ void show_redeemables_browse(const char* base, const char* key,
                 total++;
             }
         }
-        printf("00. Kembali\nPilih kode (mis. A1, B2): "); fflush(stdout);
+        printf("00. Kembali\n99. Menu utama\nPilih kode (mis. A1, B2): "); fflush(stdout);
         char ch[16]; if (!fgets(ch, sizeof(ch), stdin)) { free(items); cJSON_Delete(res); return; }
         ch[strcspn(ch, "\n")] = 0; lower_in_place(ch);
-        if (strcmp(ch, "00") == 0) { free(items); cJSON_Delete(res); return; }
+        if (strcmp(ch, "00") == 0 || strcmp(ch, "99") == 0) { free(items); cJSON_Delete(res); return; }
         int found = 0;
         for (int i = 0; i < total; i++) {
             if (strcmp(items[i].code, ch) == 0) {
@@ -277,9 +296,7 @@ void show_redeemables_browse(const char* base, const char* key,
                 if (strcmp(items[i].action_type, "PDP") == 0 && items[i].action_param[0]) {
                     purchase_flow_by_option_code(items[i].action_param);
                 } else if (strcmp(items[i].action_type, "PLP") == 0) {
-                    printf("\nFamily code: %s — gunakan menu 4 untuk browse & beli.\n",
-                           items[i].action_param);
-                    pause_enter();
+                    purchase_flow_by_family_code(items[i].action_param);
                 } else {
                     printf("Action type %s belum didukung. Param: %s\n",
                            items[i].action_type, items[i].action_param);
@@ -301,6 +318,8 @@ void show_notification_browse(const char* base, const char* key,
                               const char* id_token) {
     extern char acc_tok[4096];
     while (1) {
+        clear_screen_local();
+        rule('='); printf("  Notifikasi\n"); rule('=');
         printf("Fetching notifications...\n");
         cJSON* res = store_dashboard_segments(base, key, xdata, sec, id_token, acc_tok);
         if (!json_status_is_success(res)) {
@@ -313,7 +332,8 @@ void show_notification_browse(const char* base, const char* key,
         cJSON* list = notif_wrap ? cJSON_GetObjectItemCaseSensitive(notif_wrap, "data") : NULL;
         int n = cJSON_IsArray(list) ? cJSON_GetArraySize(list) : 0;
 
-        rule('='); printf("Notifikasi\n"); rule('=');
+        clear_screen_local();
+        rule('='); printf("  Notifikasi\n"); rule('=');
         int unread = 0;
         if (n == 0) printf("(Tidak ada notifikasi)\n");
         for (int i = 0; i < n; i++) {
@@ -327,10 +347,10 @@ void show_notification_browse(const char* base, const char* key,
             rule('-');
         }
         printf("Total: %d | Unread: %d\n", n, unread);
-        printf("1. Tandai semua unread sebagai READ\n00. Kembali\nPilih: "); fflush(stdout);
+        printf("1. Tandai semua unread sebagai READ\n00. Kembali\n99. Menu utama\nPilih: "); fflush(stdout);
         char ch[16]; if (!fgets(ch, sizeof(ch), stdin)) { cJSON_Delete(res); return; }
         ch[strcspn(ch, "\n")] = 0;
-        if (strcmp(ch, "00") == 0) { cJSON_Delete(res); return; }
+        if (strcmp(ch, "00") == 0 || strcmp(ch, "99") == 0) { cJSON_Delete(res); return; }
         if (strcmp(ch, "1") == 0) {
             for (int i = 0; i < n; i++) {
                 cJSON* e = cJSON_GetArrayItem(list, i);
@@ -352,8 +372,9 @@ void show_notification_browse(const char* base, const char* key,
 
 void show_buy_by_option_code(void) {
     char code[128];
-    rule('='); printf("Beli Paket by Option Code (manual)\n"); rule('-');
-    read_line("Masukkan package_option_code: ", code, sizeof(code));
-    if (!code[0]) { printf("[-] Kosong.\n"); return; }
+    clear_screen_local();
+    rule('='); printf("  Beli Paket Berdasarkan Option Code\n"); rule('=');
+    read_line("Masukkan package_option_code (99=batal): ", code, sizeof(code));
+    if (!code[0] || strcmp(code, "99") == 0) { return; }
     purchase_flow_by_option_code(code);
 }
