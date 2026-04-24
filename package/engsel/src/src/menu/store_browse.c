@@ -82,10 +82,14 @@ void show_store_family_list_browse(const char* base, const char* key,
         int sel = atoi(ch);
         if (sel > 0 && sel <= n) {
             cJSON* f = cJSON_GetArrayItem(list, sel - 1);
-            const char* fc = json_get_str(f, "id", "");
+            /* salin sebelum cJSON_Delete — json_get_str mengembalikan pointer
+             * ke dalam tree yang akan di-free, jadi dangling kalau tidak di-copy. */
+            const char* fc_raw = json_get_str(f, "id", "");
+            char fc_buf[256];
+            snprintf(fc_buf, sizeof(fc_buf), "%s", fc_raw ? fc_raw : "");
             cJSON_Delete(res);
-            if (fc && fc[0]) {
-                int goto_main = purchase_flow_by_family_code(fc);
+            if (fc_buf[0]) {
+                int goto_main = purchase_flow_by_family_code(fc_buf);
                 if (goto_main) return;
             }
             continue;
