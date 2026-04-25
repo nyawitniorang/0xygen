@@ -2,7 +2,20 @@
 # rpcd plugin for luci-app-engsel
 # Provides JSON-RPC interface to the engsel MyXL API
 
-. /etc/engsel/.env 2>/dev/null
+# Load environment - try shell sourcing first, then manual parse
+if [ -f /etc/engsel/.env ]; then
+	. /etc/engsel/.env 2>/dev/null
+	# If sourcing didn't set expected vars, parse manually
+	if [ -z "$BASE_CIAM_URL" ]; then
+		while IFS='=' read -r key val; do
+			case "$key" in
+				\#*|'') continue ;;
+			esac
+			val=$(printf '%s' "$val" | sed 's/^"//;s/"$//')
+			export "$key=$val" 2>/dev/null
+		done < /etc/engsel/.env
+	fi
+fi
 TOKENS_FILE="/etc/engsel/refresh-tokens.json"
 ACTIVE_FILE="/etc/engsel/active.number"
 BOOKMARK_FILE="/etc/engsel/bookmark.json"
@@ -473,9 +486,20 @@ rpc_request_otp() {
 	number=$(json_gets "$1" '@.number' 2>/dev/null)
 	[ -z "$number" ] && echo '{"error":"missing_number"}' && return
 	number=$(normalize_msisdn "$number")
+
+	if [ -z "$BASE_CIAM_URL" ] || [ -z "$BASIC_AUTH" ]; then
+		echo '{"error":"env_not_loaded","detail":"BASE_CIAM_URL atau BASIC_AUTH kosong. Pastikan /etc/engsel/.env ada dan benar."}'
+		return
+	fi
+
 	local resp
 	resp=$(ciam_request_otp "$number")
-	printf '{"status":"otp_sent","number":"%s","response":%s}' "$number" "${resp:-null}"
+	if [ -z "$resp" ]; then
+		echo '{"error":"empty_response","detail":"Response kosong dari CIAM. Periksa koneksi internet router."}'
+		return
+	else
+		printf '{"status":"otp_sent","number":"%s","response":%s}' "$number" "$resp"
+	fi
 }
 
 rpc_submit_otp() {
@@ -485,15 +509,34 @@ rpc_submit_otp() {
 	[ -z "$number" ] || [ -z "$code" ] && echo '{"error":"missing_params"}' && return
 	number=$(normalize_msisdn "$number")
 
+	# Validate env vars are loaded
+	if [ -z "$BASE_CIAM_URL" ] || [ -z "$BASIC_AUTH" ]; then
+		echo '{"error":"env_not_loaded","detail":"BASE_CIAM_URL atau BASIC_AUTH kosong. Pastikan /etc/engsel/.env ada dan benar."}'
+		return
+	fi
+
 	local resp
 	resp=$(ciam_submit_otp "SMS" "$number" "$code")
+
+	if [ -z "$resp" ]; then
+		echo '{"error":"empty_response","detail":"CIAM tidak merespons. Periksa koneksi internet router."}'
+		return
+	fi
+
 	local rt id_token access_token
 	rt=$(json_gets "$resp" '@.refresh_token' 2>/dev/null)
 	id_token=$(json_gets "$resp" '@.id_token' 2>/dev/null)
 	access_token=$(json_gets "$resp" '@.access_token' 2>/dev/null)
 
 	if [ -z "$rt" ]; then
-		printf '{"error":"login_failed","response":%s}' "$resp"
+		local err_msg err_desc
+		err_msg=$(json_gets "$resp" '@.error' 2>/dev/null)
+		err_desc=$(json_gets "$resp" '@.error_description' 2>/dev/null)
+		if [ -n "$err_msg" ]; then
+			printf '{"error":"ciam_error","detail":"%s: %s"}' "$err_msg" "${err_desc:-unknown}"
+		else
+			printf '{"error":"login_failed","detail":"Tidak ada refresh_token di response CIAM"}'
+		fi
 		return
 	fi
 
@@ -510,10 +553,10 @@ rpc_submit_otp() {
 	# Add to tokens file
 	local new_entry
 	if [ -n "$sid" ]; then
-		new_entry=$(printf '{"number":%s,"subscription_type":"%s","subscriber_id":"%s","refresh_token":"%s"}' \
+		new_entry=$(printf '{"number":"%s","subscription_type":"%s","subscriber_id":"%s","refresh_token":"%s"}' \
 			"$number" "$stype" "$sid" "$rt")
 	else
-		new_entry=$(printf '{"number":%s,"subscription_type":"%s","refresh_token":"%s"}' \
+		new_entry=$(printf '{"number":"%s","subscription_type":"%s","refresh_token":"%s"}' \
 			"$number" "$stype" "$rt")
 	fi
 
