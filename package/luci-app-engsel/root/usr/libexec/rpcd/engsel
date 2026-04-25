@@ -495,7 +495,8 @@ rpc_request_otp() {
 	local resp
 	resp=$(ciam_request_otp "$number")
 	if [ -z "$resp" ]; then
-		printf '{"status":"otp_sent","number":"%s","response":null,"warning":"Response kosong dari CIAM"}' "$number"
+		echo '{"error":"empty_response","detail":"Response kosong dari CIAM. Periksa koneksi internet router."}'
+		return
 	else
 		printf '{"status":"otp_sent","number":"%s","response":%s}' "$number" "$resp"
 	fi
