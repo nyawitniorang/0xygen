@@ -89,7 +89,7 @@ var state = {
 var mainContent;
 var navItems = {};
 
-/* ── Bottom Tab Navigation (4 tabs like MyXL) ─────── */
+/* ── Navigation (4 tabs like MyXL) ─────── */
 var NAV = [
 	{ id: 'beranda', icon: '\uD83C\uDFE0', label: 'Beranda' },
 	{ id: 'store',   icon: '\uD83D\uDED2', label: 'XL Store' },
@@ -97,11 +97,41 @@ var NAV = [
 	{ id: 'profil',  icon: '\uD83D\uDC64', label: 'Profil' }
 ];
 
+var TOOLS_SUB = [
+	{ id: 'buy',            icon: '\uD83D\uDCE6', label: 'Beli Paket' },
+	{ id: 'notif',          icon: '\uD83D\uDD14', label: 'Notifikasi' },
+	{ id: 'history',        icon: '\uD83D\uDCB0', label: 'Riwayat' },
+	{ id: 'bookmarks',      icon: '\u2B50',       label: 'Bookmark' },
+	{ id: 'tools_circle',   icon: '\uD83D\uDD04', label: 'Circle' },
+	{ id: 'tools_transfer', icon: '\uD83D\uDCB3', label: 'Transfer' },
+	{ id: 'tools_famplan',  icon: '\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67', label: 'Family Plan' },
+	{ id: 'tools_register', icon: '\uD83D\uDCDD', label: 'Registrasi' },
+	{ id: 'tools_autobuy',  icon: '\uD83E\uDD16', label: 'Auto Buy' },
+	{ id: 'tools_decoy',    icon: '\uD83C\uDF81', label: 'Custom Decoy' },
+	{ id: 'settings',       icon: '\u2699\uFE0F', label: 'Pengaturan' }
+];
+
+var sidebarItems = {};
+
+var TOOLS_PAGES = {};
+TOOLS_SUB.forEach(function(t) { TOOLS_PAGES[t.id] = true; });
+
 function navigate(page) {
 	state.page = page;
+	/* Bottom nav */
 	Object.keys(navItems).forEach(function(k) {
 		navItems[k].classList.toggle('active', k === page);
 	});
+	/* Sidebar main items */
+	var parentPage = TOOLS_PAGES[page] ? 'tools' : page;
+	Object.keys(sidebarItems).forEach(function(k) {
+		sidebarItems[k].classList.toggle('active', k === page || k === parentPage);
+	});
+	/* Expand/collapse tools sub-menu */
+	var toolsSub = document.getElementById('eng-sidebar-tools-sub');
+	if (toolsSub) {
+		toolsSub.style.display = (parentPage === 'tools') ? 'block' : 'none';
+	}
 	renderPage();
 }
 
@@ -1130,10 +1160,55 @@ return view.extend({
 
 	render: function() {
 		var container = el('div', { class: 'eng-app', id: 'view-engsel' });
+
+		/* Desktop sidebar */
+		var sidebar = el('div', { class: 'eng-sidebar' });
+		var sidebarBrand = el('div', { class: 'eng-sidebar-brand' }, [
+			el('div', { class: 'eng-sidebar-logo' }, ['\uD83D\uDCF6']),
+			el('div', {}, [
+				el('div', { class: 'eng-sidebar-title' }, ['Engsel']),
+				el('div', { class: 'eng-sidebar-sub' }, ['MyXL Manager'])
+			])
+		]);
+		sidebar.appendChild(sidebarBrand);
+
+		var sidebarNav = el('div', { class: 'eng-sidebar-nav' });
+		NAV.forEach(function(item) {
+			var navItem = el('div', {
+				class: 'eng-sidebar-item' + (item.id === state.page ? ' active' : ''),
+				onclick: function() { navigate(item.id); }
+			}, [
+				el('span', { class: 'eng-sidebar-icon' }, [item.icon]),
+				el('span', { class: 'eng-sidebar-label' }, [item.label])
+			]);
+			sidebarItems[item.id] = navItem;
+			sidebarNav.appendChild(navItem);
+
+			if (item.id === 'tools') {
+				var subMenu = el('div', { class: 'eng-sidebar-sub-menu', id: 'eng-sidebar-tools-sub' });
+				subMenu.style.display = 'none';
+				TOOLS_SUB.forEach(function(sub) {
+					var subItem = el('div', {
+						class: 'eng-sidebar-sub-item',
+						onclick: function(e) { e.stopPropagation(); navigate(sub.id); }
+					}, [
+						el('span', { class: 'eng-sidebar-sub-icon' }, [sub.icon]),
+						el('span', {}, [sub.label])
+					]);
+					sidebarItems[sub.id] = subItem;
+					subMenu.appendChild(subItem);
+				});
+				sidebarNav.appendChild(subMenu);
+			}
+		});
+		sidebar.appendChild(sidebarNav);
+		container.appendChild(sidebar);
+
+		/* Main content area */
 		mainContent = el('div', { class: 'eng-main' });
 		container.appendChild(mainContent);
 
-		/* Bottom navigation bar */
+		/* Bottom navigation bar (mobile) */
 		var navbar = el('div', { class: 'eng-navbar' });
 		NAV.forEach(function(item) {
 			var pill = el('div', {
