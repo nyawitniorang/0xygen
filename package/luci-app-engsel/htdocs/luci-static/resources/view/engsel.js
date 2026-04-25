@@ -627,7 +627,14 @@ function showPurchaseModal(pkg) {
 			var method = 'purchase_' + m.id;
 			statusMsg.innerHTML = '';
 			statusMsg.appendChild(el('div', { class: 'eng-loading' }, [el('div', { class: 'eng-spinner' }), 'Memproses...']));
-			engRpc(method, { option_code: pkg.option_code || pkg.code || '' }).then(function(r) {
+			engRpc(method, {
+				option_code: pkg.option_code || pkg.code || '',
+				price: pkg.price || 0,
+				name: pkg.package_name || pkg.name || '',
+				token_confirmation: pkg.token_confirmation || pkg.confirmation_token || '',
+				payment_for: pkg.payment_for || 'BUY_PACKAGE',
+				overwrite_amount: pkg.overwrite_amount || 0
+			}).then(function(r) {
 				statusMsg.innerHTML = '';
 				if (r && r.error) {
 					statusMsg.appendChild(el('div', { class: 'eng-alert eng-alert-danger' }, ['Gagal: ' + r.error + (r.detail ? ' - ' + r.detail : '')]));
@@ -751,11 +758,11 @@ function renderBuyOption(ct) {
 		var code = input.value.trim();
 		if (!code) return;
 		showLoading(results);
-		engRpc('store_packages', { option_code: code }).then(function(r) {
+		engRpc('get_package_detail', { option_code: code }).then(function(r) {
 			results.innerHTML = '';
-			var pkg = r && r.data ? r.data : r;
+			var pkg = (r && r.data && r.data.package_detail) || (r && r.data) || r;
 			if (pkg && pkg.error) { showAlert(results, 'Tidak ditemukan: ' + pkg.error, 'danger'); return; }
-			showPurchaseModal({ package_name: pkg.package_name || pkg.name || code, price: pkg.price || 0, option_code: code });
+			showPurchaseModal({ package_name: pkg.package_name || pkg.name || code, price: pkg.price || pkg.base_price || 0, option_code: code, token_confirmation: pkg.token_confirmation || pkg.confirmation_token || '', payment_for: pkg.payment_for || 'BUY_PACKAGE' });
 		});
 	} }, ['Cari']);
 	form.appendChild(el('div', { class: 'eng-form-group' }, [
@@ -775,9 +782,9 @@ function renderBuyFamily(ct) {
 		var code = input.value.trim();
 		if (!code) return;
 		showLoading(results);
-		engRpc('store_packages', { family_code: code }).then(function(r) {
+		engRpc('family_bruteforce', { family_code: code }).then(function(r) {
 			results.innerHTML = '';
-			var pkgs = (r && r.data && r.data.packages) || (r && r.data) || [];
+			var pkgs = (r && r.data && r.data.package_variants) || (r && r.data) || [];
 			if (!Array.isArray(pkgs)) pkgs = [pkgs];
 			if (pkgs.length === 0) { showAlert(results, 'Tidak ditemukan', 'warning'); return; }
 			pkgs.forEach(function(p) {
