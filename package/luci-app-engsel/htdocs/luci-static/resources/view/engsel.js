@@ -368,7 +368,7 @@ pages.history = function(ct) {
 	var body = el('div');
 	ct.appendChild(body);
 	showLoading(body);
-	engRpc('get_history').then(function(r) {
+	engRpc('transaction_history').then(function(r) {
 		body.innerHTML = '';
 		if (!r || r.error) { showAlert(body, 'Gagal: ' + (r ? r.error : 'Unknown'), 'danger'); return; }
 		var items = (r.data && r.data.histories) || r.histories || (r.data && r.data) || [];
@@ -874,14 +874,15 @@ pages.tools_register = function(ct) {
 		el('div', { class: 'eng-page-title' }, ['Registrasi Kartu'])
 	]));
 	if (!state.loggedIn) { showAlert(ct, 'Login terlebih dahulu', 'warning'); return; }
+	var msisdnInput = el('input', { class: 'eng-input', type: 'text', placeholder: 'Nomor HP (08xx)', value: state.number || '' });
 	var nikInput = el('input', { class: 'eng-input', type: 'text', placeholder: 'NIK (16 digit)' });
 	var kkInput = el('input', { class: 'eng-input', type: 'text', placeholder: 'No. KK (16 digit)' });
 	var statusMsg = el('div');
 	var btn = el('button', { class: 'eng-btn eng-btn-primary eng-btn-block eng-btn-lg', onclick: function() {
-		var nik = nikInput.value.trim(), kk = kkInput.value.trim();
-		if (!nik || !kk) { showAlert(statusMsg, 'Lengkapi NIK dan KK', 'warning'); return; }
+		var msisdn = msisdnInput.value.trim(), nik = nikInput.value.trim(), kk = kkInput.value.trim();
+		if (!msisdn || !nik || !kk) { showAlert(statusMsg, 'Lengkapi semua field', 'warning'); return; }
 		btn.disabled = true; btn.textContent = 'Memproses...';
-		engRpc('register_card', { nik: nik, kk: kk }).then(function(r) {
+		engRpc('register_card', { msisdn: msisdn, nik: nik, kk: kk }).then(function(r) {
 			btn.disabled = false; btn.textContent = 'Daftarkan';
 			statusMsg.innerHTML = '';
 			if (r && r.error) { showAlert(statusMsg, 'Gagal: ' + r.error, 'danger'); }
@@ -890,6 +891,7 @@ pages.tools_register = function(ct) {
 	} }, ['Daftarkan']);
 
 	ct.appendChild(el('div', { class: 'eng-card' }, [
+		el('div', { class: 'eng-form-group' }, [el('label', {}, ['Nomor HP']), msisdnInput]),
 		el('div', { class: 'eng-form-group' }, [el('label', {}, ['NIK']), nikInput]),
 		el('div', { class: 'eng-form-group' }, [el('label', {}, ['No. KK']), kkInput]),
 		btn,
@@ -1017,7 +1019,7 @@ pages.profil = function(ct) {
 		if (!code) return;
 		btnSubmit.disabled = true;
 		btnSubmit.textContent = 'Memverifikasi...';
-		engRpc('submit_otp', { number: loginNumber, otp: code }).then(function(r) {
+		engRpc('submit_otp', { number: loginNumber, code: code }).then(function(r) {
 			btnSubmit.disabled = false;
 			btnSubmit.textContent = 'Verifikasi';
 			if (r && r.error) {
