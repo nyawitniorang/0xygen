@@ -253,7 +253,8 @@ pages.accounts = function(ct) {
 			btnOtp.disabled = false;
 			btnOtp.textContent = 'Kirim OTP';
 			if (r && r.error) {
-				loginMsg.textContent = 'Gagal: ' + r.error;
+				loginMsg.textContent = 'Gagal: ' + r.error + (r.detail ? ' - ' + r.detail : '');
+				loginMsg.className = 'eng-mt-1 eng-alert eng-alert-danger';
 				return;
 			}
 			loginMsg.textContent = 'OTP dikirim ke ' + loginNumber;
@@ -274,7 +275,7 @@ pages.accounts = function(ct) {
 			btnSubmit.disabled = false;
 			btnSubmit.textContent = 'Verifikasi';
 			if (r && r.error) {
-				loginMsg.textContent = 'Gagal: ' + (r.error || 'unknown');
+				loginMsg.textContent = 'Gagal: ' + r.error + (r.detail ? ' - ' + r.detail : '');
 				loginMsg.className = 'eng-mt-1 eng-alert eng-alert-danger';
 				return;
 			}
