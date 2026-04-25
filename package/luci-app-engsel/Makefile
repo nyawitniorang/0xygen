@@ -53,7 +53,9 @@ endef
 
 define Package/luci-app-engsel/postinst
 #!/bin/sh
-[ -n "$${IPKG_INSTROOT}" ] || /etc/uci-defaults/99-luci-app-engsel
+if [ -z "$${IPKG_INSTROOT}" ] && [ -x /etc/uci-defaults/99-luci-app-engsel ]; then
+	/etc/uci-defaults/99-luci-app-engsel && rm -f /etc/uci-defaults/99-luci-app-engsel
+fi
 exit 0
 endef
 
