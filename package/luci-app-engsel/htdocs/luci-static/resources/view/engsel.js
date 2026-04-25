@@ -1102,6 +1102,18 @@ function loadAccounts() {
 			state.loggedIn = true;
 			state.number = active.number || active.msisdn || '';
 			state.stype = active.subscription_type || active.stype || 'PREPAID';
+			engRpc('auth_status').then(function(s) {
+				if (!s || !s.logged_in) {
+					engRpc('refresh_auth').then(function(ar) {
+						if (ar && ar.status === 'ok') {
+							if (ar.number) state.number = ar.number;
+							if (ar.subscription_type) state.stype = ar.subscription_type;
+							if (ar.balance) state.balance = ar.balance;
+							navigate(state.page);
+						}
+					});
+				}
+			});
 		} else {
 			state.loggedIn = false;
 			state.number = '';
