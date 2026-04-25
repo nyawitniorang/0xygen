@@ -89,19 +89,59 @@ var state = {
 var mainContent;
 var navItems = {};
 
-/* ── Bottom Tab Navigation (4 tabs like MyXL) ─────── */
-var NAV = [
+/* ── Navigation ─────── */
+var NAV_MOBILE = [
 	{ id: 'beranda', icon: '\uD83C\uDFE0', label: 'Beranda' },
 	{ id: 'store',   icon: '\uD83D\uDED2', label: 'XL Store' },
 	{ id: 'tools',   icon: '\u2699\uFE0F', label: 'Tools' },
 	{ id: 'profil',  icon: '\uD83D\uDC64', label: 'Profil' }
 ];
 
+var NAV_DESKTOP_EXTRA = [
+	{ id: 'tools_autobuy', icon: '\uD83E\uDD16', label: 'Auto Buy' },
+	{ id: 'custom',        icon: '\uD83D\uDEE0\uFE0F', label: 'Custom' }
+];
+
+var NAV = NAV_MOBILE;
+
+var TOOLS_SUB = [
+	{ id: 'buy',            icon: '\uD83D\uDCE6', label: 'Beli Paket' },
+	{ id: 'notif',          icon: '\uD83D\uDD14', label: 'Notifikasi' },
+	{ id: 'history',        icon: '\uD83D\uDCB0', label: 'Riwayat' },
+	{ id: 'bookmarks',      icon: '\u2B50',       label: 'Bookmark' },
+	{ id: 'tools_circle',   icon: '\uD83D\uDD04', label: 'Circle' },
+	{ id: 'tools_transfer', icon: '\uD83D\uDCB3', label: 'Transfer' },
+	{ id: 'tools_famplan',  icon: '\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67', label: 'Family Plan' },
+	{ id: 'tools_register', icon: '\uD83D\uDCDD', label: 'Registrasi' },
+	{ id: 'tools_autobuy',  icon: '\uD83E\uDD16', label: 'Auto Buy' },
+	{ id: 'tools_decoy',    icon: '\uD83C\uDF81', label: 'Custom Decoy' },
+	{ id: 'settings',       icon: '\u2699\uFE0F', label: 'Pengaturan' }
+];
+
+var sidebarItems = {};
+
+var TOOLS_PAGES = {};
+TOOLS_SUB.forEach(function(t) { TOOLS_PAGES[t.id] = true; });
+TOOLS_PAGES['custom'] = true;
+TOOLS_PAGES['custom_hot'] = true;
+
 function navigate(page) {
 	state.page = page;
+	/* Bottom nav (mobile keys: 'beranda', desktop keys: 'd_beranda') */
 	Object.keys(navItems).forEach(function(k) {
-		navItems[k].classList.toggle('active', k === page);
+		var id = k.indexOf('d_') === 0 ? k.substring(2) : k;
+		navItems[k].classList.toggle('active', id === page);
 	});
+	/* Sidebar main items */
+	var parentPage = TOOLS_PAGES[page] ? 'tools' : page;
+	Object.keys(sidebarItems).forEach(function(k) {
+		sidebarItems[k].classList.toggle('active', k === page || k === parentPage);
+	});
+	/* Expand/collapse tools sub-menu */
+	var toolsSub = document.getElementById('eng-sidebar-tools-sub');
+	if (toolsSub) {
+		toolsSub.style.display = (parentPage === 'tools') ? 'block' : 'none';
+	}
 	renderPage();
 }
 
@@ -948,6 +988,68 @@ pages.tools_decoy = function(ct) {
 	});
 };
 
+/* Custom hub — Custom Decoy, Custom HOT, Bookmark management */
+pages.custom = function(ct) {
+	ct.appendChild(el('div', { class: 'eng-page-header' }, [
+		el('button', { class: 'eng-back-btn', onclick: function() { navigate('tools'); } }, ['\u2190']),
+		el('div', { class: 'eng-page-title' }, ['Custom & Konfigurasi'])
+	]));
+	if (!state.loggedIn) { showAlert(ct, 'Login terlebih dahulu', 'warning'); return; }
+
+	var menus = [
+		{ icon: '\uD83C\uDF81', title: 'Custom Decoy', desc: 'Paket custom sendiri', page: 'tools_decoy' },
+		{ icon: '\uD83D\uDD25', title: 'Custom HOT', desc: 'Kelola paket HOT favorit', page: 'custom_hot' },
+		{ icon: '\u2B50', title: 'Bookmark Paket', desc: 'Paket yang disimpan', page: 'bookmarks' },
+		{ icon: '\uD83D\uDCDD', title: 'Registrasi Kartu', desc: 'Daftarkan NIK/KK', page: 'tools_register' },
+		{ icon: '\u2699\uFE0F', title: 'Pengaturan', desc: 'Settings & konfigurasi', page: 'settings' }
+	];
+
+	var list = el('div', { class: 'eng-menu-list' });
+	menus.forEach(function(m) {
+		list.appendChild(el('div', { class: 'eng-menu-item', onclick: function() { navigate(m.page); } }, [
+			el('div', { class: 'eng-menu-icon' }, [m.icon]),
+			el('div', { class: 'eng-menu-text' }, [
+				el('div', { class: 'eng-menu-title' }, [m.title]),
+				el('div', { class: 'eng-menu-desc' }, [m.desc])
+			]),
+			el('div', { class: 'eng-menu-arrow' }, ['\u203A'])
+		]));
+	});
+	ct.appendChild(list);
+};
+
+/* Custom HOT management */
+pages.custom_hot = function(ct) {
+	ct.appendChild(el('div', { class: 'eng-page-header' }, [
+		el('button', { class: 'eng-back-btn', onclick: function() { navigate('custom'); } }, ['\u2190']),
+		el('div', { class: 'eng-page-title' }, ['Custom HOT'])
+	]));
+	if (!state.loggedIn) { showAlert(ct, 'Login terlebih dahulu', 'warning'); return; }
+	var body = el('div');
+	ct.appendChild(body);
+	showLoading(body);
+	engRpc('get_hot').then(function(r) {
+		body.innerHTML = '';
+		var items = (r && r.packages) || (r && r.data) || [];
+		if (!Array.isArray(items) || items.length === 0) {
+			body.appendChild(el('div', { class: 'eng-text-center eng-text-muted eng-mt-2' }, ['Tidak ada paket HOT custom']));
+			return;
+		}
+		var grid = el('div', { class: 'eng-card-grid eng-px' });
+		items.forEach(function(p) {
+			grid.appendChild(el('div', { class: 'eng-pkg-card', onclick: function() { showPurchaseModal(p); } }, [
+				el('div', { class: 'eng-pkg-name' }, [p.package_name || p.name || 'HOT']),
+				el('div', { class: 'eng-pkg-price' }, [fmtRp(p.price || 0)]),
+				el('div', { class: 'eng-pkg-meta' }, [
+					el('span', {}, [p.option_code || '']),
+					p.validity ? el('span', {}, [p.validity]) : null
+				])
+			]));
+		});
+		body.appendChild(grid);
+	});
+};
+
 /* Settings */
 pages.settings = function(ct) {
 	ct.appendChild(el('div', { class: 'eng-page-header' }, [
@@ -1130,12 +1232,57 @@ return view.extend({
 
 	render: function() {
 		var container = el('div', { class: 'eng-app', id: 'view-engsel' });
+
+		/* Desktop sidebar */
+		var sidebar = el('div', { class: 'eng-sidebar' });
+		var sidebarBrand = el('div', { class: 'eng-sidebar-brand' }, [
+			el('div', { class: 'eng-sidebar-logo' }, ['\uD83D\uDCF6']),
+			el('div', {}, [
+				el('div', { class: 'eng-sidebar-title' }, ['Engsel']),
+				el('div', { class: 'eng-sidebar-sub' }, ['MyXL Manager'])
+			])
+		]);
+		sidebar.appendChild(sidebarBrand);
+
+		var sidebarNav = el('div', { class: 'eng-sidebar-nav' });
+		NAV.forEach(function(item) {
+			var navItem = el('div', {
+				class: 'eng-sidebar-item' + (item.id === state.page ? ' active' : ''),
+				onclick: function() { navigate(item.id); }
+			}, [
+				el('span', { class: 'eng-sidebar-icon' }, [item.icon]),
+				el('span', { class: 'eng-sidebar-label' }, [item.label])
+			]);
+			sidebarItems[item.id] = navItem;
+			sidebarNav.appendChild(navItem);
+
+			if (item.id === 'tools') {
+				var subMenu = el('div', { class: 'eng-sidebar-sub-menu', id: 'eng-sidebar-tools-sub' });
+				subMenu.style.display = 'none';
+				TOOLS_SUB.forEach(function(sub) {
+					var subItem = el('div', {
+						class: 'eng-sidebar-sub-item',
+						onclick: function(e) { e.stopPropagation(); navigate(sub.id); }
+					}, [
+						el('span', { class: 'eng-sidebar-sub-icon' }, [sub.icon]),
+						el('span', {}, [sub.label])
+					]);
+					sidebarItems[sub.id] = subItem;
+					subMenu.appendChild(subItem);
+				});
+				sidebarNav.appendChild(subMenu);
+			}
+		});
+		sidebar.appendChild(sidebarNav);
+		container.appendChild(sidebar);
+
+		/* Main content area */
 		mainContent = el('div', { class: 'eng-main' });
 		container.appendChild(mainContent);
 
-		/* Bottom navigation bar */
-		var navbar = el('div', { class: 'eng-navbar' });
-		NAV.forEach(function(item) {
+		/* Bottom navigation bar — mobile: 4 tabs, desktop: 4 + extra */
+		var navbar = el('div', { class: 'eng-navbar eng-navbar-mobile' });
+		NAV_MOBILE.forEach(function(item) {
 			var pill = el('div', {
 				class: 'eng-nav-pill' + (item.id === state.page ? ' active' : ''),
 				onclick: function() { navigate(item.id); }
@@ -1147,6 +1294,21 @@ return view.extend({
 			navbar.appendChild(pill);
 		});
 		container.appendChild(navbar);
+
+		/* Desktop-only extended bottom nav */
+		var navbarDesktop = el('div', { class: 'eng-navbar eng-navbar-desktop' });
+		NAV_MOBILE.concat(NAV_DESKTOP_EXTRA).forEach(function(item) {
+			var pill = el('div', {
+				class: 'eng-nav-pill' + (item.id === state.page ? ' active' : ''),
+				onclick: function() { navigate(item.id); }
+			}, [
+				el('div', { class: 'eng-nav-icon' }, [item.icon]),
+				el('div', { class: 'eng-nav-label' }, [item.label])
+			]);
+			navItems['d_' + item.id] = pill;
+			navbarDesktop.appendChild(pill);
+		});
+		container.appendChild(navbarDesktop);
 
 		/* Load accounts and initial data */
 		loadAccounts();
