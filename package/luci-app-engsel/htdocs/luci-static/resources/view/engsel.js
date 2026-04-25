@@ -127,9 +127,10 @@ TOOLS_PAGES['custom_hot'] = true;
 
 function navigate(page) {
 	state.page = page;
-	/* Bottom nav */
+	/* Bottom nav (mobile keys: 'beranda', desktop keys: 'd_beranda') */
 	Object.keys(navItems).forEach(function(k) {
-		navItems[k].classList.toggle('active', k === page);
+		var id = k.indexOf('d_') === 0 ? k.substring(2) : k;
+		navItems[k].classList.toggle('active', id === page);
 	});
 	/* Sidebar main items */
 	var parentPage = TOOLS_PAGES[page] ? 'tools' : page;
