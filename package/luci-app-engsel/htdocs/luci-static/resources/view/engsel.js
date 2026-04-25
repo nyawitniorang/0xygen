@@ -1108,7 +1108,7 @@ function loadAccounts() {
 						if (ar && ar.status === 'ok') {
 							if (ar.number) state.number = ar.number;
 							if (ar.subscription_type) state.stype = ar.subscription_type;
-							if (ar.balance) state.balance = ar.balance;
+							if (ar.balance != null) state.balance = ar.balance;
 							navigate(state.page);
 						}
 					});
