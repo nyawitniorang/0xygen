@@ -1121,6 +1121,13 @@ return view.extend({
 	handleSave: null,
 	handleReset: null,
 
+	load: function() {
+		var css = document.createElement('link');
+		css.rel = 'stylesheet';
+		css.href = L.resource('engsel/engsel.css');
+		document.head.appendChild(css);
+	},
+
 	render: function() {
 		var container = el('div', { class: 'eng-app', id: 'view-engsel' });
 		mainContent = el('div', { class: 'eng-main' });
