@@ -411,17 +411,33 @@ authenticate_account() {
 	printf '%s' "$access_token" > "$CACHE_DIR/access_token"
 	printf '%s' "$num" > "$ACTIVE_FILE"
 
-	# Update refresh token in file
+	# Update refresh token in file (CIAM rotates tokens on each refresh)
 	if [ -n "$new_rt" ]; then
-		local tokens_raw
-		tokens_raw=$(cat "$TOKENS_FILE")
-		tokens_raw=$(echo "$tokens_raw" | jsonfilter -e "@[$idx]" 2>/dev/null | \
-			sed "s|\"refresh_token\":\"[^\"]*\"|\"refresh_token\":\"$new_rt\"|" 2>/dev/null)
-		# Simpler: overwrite with updated token via temp
-		local tmp_file="/tmp/engsel-tokens-tmp.json"
-		cp "$TOKENS_FILE" "$tmp_file"
-		# Use simple approach - Python-style JSON update not available in busybox
-		# Just write back the response refresh token
+		local count_tok i_tok new_arr='['
+		count_tok=$(jsonfilter -i "$TOKENS_FILE" -e '@[*]' 2>/dev/null | wc -l)
+		i_tok=0
+		while [ "$i_tok" -lt "$count_tok" ]; do
+			[ "$i_tok" -gt 0 ] && new_arr="${new_arr},"
+			local e_num e_stype e_rt e_sid
+			e_num=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i_tok].number" 2>/dev/null)
+			e_stype=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i_tok].subscription_type" 2>/dev/null)
+			e_sid=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i_tok].subscriber_id" 2>/dev/null)
+			if [ "$i_tok" -eq "$idx" ]; then
+				e_rt="$new_rt"
+				[ -n "$real_sid" ] && e_sid="$real_sid"
+				[ -n "$real_stype" ] && e_stype="$real_stype"
+			else
+				e_rt=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i_tok].refresh_token" 2>/dev/null)
+			fi
+			if [ -n "$e_sid" ]; then
+				new_arr="${new_arr}{\"number\":\"${e_num}\",\"subscription_type\":\"${e_stype}\",\"subscriber_id\":\"${e_sid}\",\"refresh_token\":\"${e_rt}\"}"
+			else
+				new_arr="${new_arr}{\"number\":\"${e_num}\",\"subscription_type\":\"${e_stype}\",\"refresh_token\":\"${e_rt}\"}"
+			fi
+			i_tok=$((i_tok + 1))
+		done
+		new_arr="${new_arr}]"
+		printf '%s' "$new_arr" > "$TOKENS_FILE"
 	fi
 
 	# Fetch profile to update subscription type
@@ -491,7 +507,7 @@ rpc_list_accounts() {
 	active_idx=$(get_active_idx)
 	local tokens count
 	[ ! -f "$TOKENS_FILE" ] && echo '{"accounts":[],"active":0}' && return
-	count=$(jsonfilter -i "$TOKENS_FILE" -l 2>/dev/null || echo 0)
+	count=$(jsonfilter -i "$TOKENS_FILE" -e '@[*]' 2>/dev/null | wc -l)
 	# Build JSON array
 	local result='{"accounts":['
 	local idx=0
@@ -624,7 +640,7 @@ rpc_delete_account() {
 	idx=$(json_gets "$1" '@.index' 2>/dev/null)
 	[ -z "$idx" ] && echo '{"error":"missing_index"}' && return
 	local count
-	count=$(jsonfilter -i "$TOKENS_FILE" -l 2>/dev/null || echo 0)
+	count=$(jsonfilter -i "$TOKENS_FILE" -e '@[*]' 2>/dev/null | wc -l)
 	[ "$idx" -ge "$count" ] && echo '{"error":"invalid_index"}' && return
 
 	# Build new array without the deleted index
@@ -1053,7 +1069,7 @@ rpc_delete_bookmark() {
 	data=$(cat "$BOOKMARK_FILE" 2>/dev/null)
 	[ -z "$data" ] && echo '{"error":"empty"}' && return
 	# Remove item at index using jsonfilter + rebuild
-	count=$(echo "$data" | jsonfilter -l 2>/dev/null || echo 0)
+	count=$(echo "$data" | jsonfilter -e '@[*]' 2>/dev/null | wc -l)
 	local result='['
 	local i=0 first=1
 	while [ "$i" -lt "$count" ]; do
