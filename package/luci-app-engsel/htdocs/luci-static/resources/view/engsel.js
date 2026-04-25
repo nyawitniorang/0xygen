@@ -127,9 +127,9 @@ pages.beranda = function(ct) {
 				state.loggedIn ? el('div', { class: 'eng-profile-badge' }, [state.stype || 'PREPAID']) : null
 			])
 		]),
-		el('div', { class: 'eng-notif-btn', onclick: function() { navigate('notif'); } }, [
+		el('div', { class: 'eng-notif-btn', id: 'eng-notif-bell', onclick: function() { navigate('notif'); } }, [
 			'\uD83D\uDD14',
-			state.notifCount > 0 ? el('span', { class: 'eng-notif-count' }, [String(state.notifCount)]) : null
+			state.notifCount > 0 ? el('span', { class: 'eng-notif-count', id: 'eng-notif-badge' }, [String(state.notifCount)]) : null
 		])
 	]);
 	ct.appendChild(profileHeader);
@@ -1494,7 +1494,18 @@ return view.extend({
 			});
 			engRpc('notifications').then(function(r) {
 				var notifs = (r && r.data && r.data.notifications) || (r && r.data) || [];
-				if (Array.isArray(notifs)) state.notifCount = notifs.length;
+				if (Array.isArray(notifs)) {
+					state.notifCount = notifs.length;
+					var bell = document.getElementById('eng-notif-bell');
+					if (bell && state.notifCount > 0) {
+						var existing = document.getElementById('eng-notif-badge');
+						if (existing) {
+							existing.textContent = String(state.notifCount);
+						} else {
+							bell.appendChild(el('span', { class: 'eng-notif-count', id: 'eng-notif-badge' }, [String(state.notifCount)]));
+						}
+					}
+				}
 			});
 		}
 

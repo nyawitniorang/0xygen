@@ -608,9 +608,9 @@ rpc_delete_account() {
 			ert=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i].refresh_token" 2>/dev/null)
 			esi=$(jsonfilter -i "$TOKENS_FILE" -e "@[$i].subscriber_id" 2>/dev/null)
 			if [ -n "$esi" ]; then
-				result="${result}{\"number\":${en},\"subscription_type\":\"${es}\",\"subscriber_id\":\"${esi}\",\"refresh_token\":\"${ert}\"}"
+				result="${result}{\"number\":\"${en}\",\"subscription_type\":\"${es}\",\"subscriber_id\":\"${esi}\",\"refresh_token\":\"${ert}\"}"
 			else
-				result="${result}{\"number\":${en},\"subscription_type\":\"${es}\",\"refresh_token\":\"${ert}\"}"
+				result="${result}{\"number\":\"${en}\",\"subscription_type\":\"${es}\",\"refresh_token\":\"${ert}\"}"
 			fi
 			first=0
 		fi
