@@ -383,6 +383,8 @@
 	box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
 }
 
+.eng-navbar-desktop { display: none; }
+
 .eng-nav-pill {
 	display: flex;
 	flex-direction: column;
@@ -1072,11 +1074,22 @@
 		flex: 1;
 		min-width: 0;
 		max-width: 800px;
-		padding-bottom: 20px;
+		padding-bottom: 80px;
 	}
 
-	.eng-navbar {
+	.eng-navbar-mobile {
 		display: none !important;
+	}
+
+	.eng-navbar-desktop {
+		display: flex !important;
+		position: fixed;
+		bottom: 0;
+		left: 240px;
+		right: 0;
+		max-width: none;
+		transform: none;
+		width: auto;
 	}
 
 	.eng-modal-overlay {
@@ -1097,6 +1110,10 @@
 	.eng-sidebar {
 		width: 260px;
 		min-width: 260px;
+	}
+
+	.eng-navbar-desktop {
+		left: 260px;
 	}
 
 	.eng-main {

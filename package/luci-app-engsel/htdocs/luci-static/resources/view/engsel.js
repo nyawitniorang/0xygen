@@ -89,13 +89,20 @@ var state = {
 var mainContent;
 var navItems = {};
 
-/* ── Navigation (4 tabs like MyXL) ─────── */
-var NAV = [
+/* ── Navigation ─────── */
+var NAV_MOBILE = [
 	{ id: 'beranda', icon: '\uD83C\uDFE0', label: 'Beranda' },
 	{ id: 'store',   icon: '\uD83D\uDED2', label: 'XL Store' },
 	{ id: 'tools',   icon: '\u2699\uFE0F', label: 'Tools' },
 	{ id: 'profil',  icon: '\uD83D\uDC64', label: 'Profil' }
 ];
+
+var NAV_DESKTOP_EXTRA = [
+	{ id: 'tools_autobuy', icon: '\uD83E\uDD16', label: 'Auto Buy' },
+	{ id: 'custom',        icon: '\uD83D\uDEE0\uFE0F', label: 'Custom' }
+];
+
+var NAV = NAV_MOBILE;
 
 var TOOLS_SUB = [
 	{ id: 'buy',            icon: '\uD83D\uDCE6', label: 'Beli Paket' },
@@ -115,6 +122,8 @@ var sidebarItems = {};
 
 var TOOLS_PAGES = {};
 TOOLS_SUB.forEach(function(t) { TOOLS_PAGES[t.id] = true; });
+TOOLS_PAGES['custom'] = true;
+TOOLS_PAGES['custom_hot'] = true;
 
 function navigate(page) {
 	state.page = page;
@@ -978,6 +987,68 @@ pages.tools_decoy = function(ct) {
 	});
 };
 
+/* Custom hub — Custom Decoy, Custom HOT, Bookmark management */
+pages.custom = function(ct) {
+	ct.appendChild(el('div', { class: 'eng-page-header' }, [
+		el('button', { class: 'eng-back-btn', onclick: function() { navigate('tools'); } }, ['\u2190']),
+		el('div', { class: 'eng-page-title' }, ['Custom & Konfigurasi'])
+	]));
+	if (!state.loggedIn) { showAlert(ct, 'Login terlebih dahulu', 'warning'); return; }
+
+	var menus = [
+		{ icon: '\uD83C\uDF81', title: 'Custom Decoy', desc: 'Paket custom sendiri', page: 'tools_decoy' },
+		{ icon: '\uD83D\uDD25', title: 'Custom HOT', desc: 'Kelola paket HOT favorit', page: 'custom_hot' },
+		{ icon: '\u2B50', title: 'Bookmark Paket', desc: 'Paket yang disimpan', page: 'bookmarks' },
+		{ icon: '\uD83D\uDCDD', title: 'Registrasi Kartu', desc: 'Daftarkan NIK/KK', page: 'tools_register' },
+		{ icon: '\u2699\uFE0F', title: 'Pengaturan', desc: 'Settings & konfigurasi', page: 'settings' }
+	];
+
+	var list = el('div', { class: 'eng-menu-list' });
+	menus.forEach(function(m) {
+		list.appendChild(el('div', { class: 'eng-menu-item', onclick: function() { navigate(m.page); } }, [
+			el('div', { class: 'eng-menu-icon' }, [m.icon]),
+			el('div', { class: 'eng-menu-text' }, [
+				el('div', { class: 'eng-menu-title' }, [m.title]),
+				el('div', { class: 'eng-menu-desc' }, [m.desc])
+			]),
+			el('div', { class: 'eng-menu-arrow' }, ['\u203A'])
+		]));
+	});
+	ct.appendChild(list);
+};
+
+/* Custom HOT management */
+pages.custom_hot = function(ct) {
+	ct.appendChild(el('div', { class: 'eng-page-header' }, [
+		el('button', { class: 'eng-back-btn', onclick: function() { navigate('custom'); } }, ['\u2190']),
+		el('div', { class: 'eng-page-title' }, ['Custom HOT'])
+	]));
+	if (!state.loggedIn) { showAlert(ct, 'Login terlebih dahulu', 'warning'); return; }
+	var body = el('div');
+	ct.appendChild(body);
+	showLoading(body);
+	engRpc('get_hot').then(function(r) {
+		body.innerHTML = '';
+		var items = (r && r.packages) || (r && r.data) || [];
+		if (!Array.isArray(items) || items.length === 0) {
+			body.appendChild(el('div', { class: 'eng-text-center eng-text-muted eng-mt-2' }, ['Tidak ada paket HOT custom']));
+			return;
+		}
+		var grid = el('div', { class: 'eng-card-grid eng-px' });
+		items.forEach(function(p) {
+			grid.appendChild(el('div', { class: 'eng-pkg-card', onclick: function() { showPurchaseModal(p); } }, [
+				el('div', { class: 'eng-pkg-name' }, [p.package_name || p.name || 'HOT']),
+				el('div', { class: 'eng-pkg-price' }, [fmtRp(p.price || 0)]),
+				el('div', { class: 'eng-pkg-meta' }, [
+					el('span', {}, [p.option_code || '']),
+					p.validity ? el('span', {}, [p.validity]) : null
+				])
+			]));
+		});
+		body.appendChild(grid);
+	});
+};
+
 /* Settings */
 pages.settings = function(ct) {
 	ct.appendChild(el('div', { class: 'eng-page-header' }, [
@@ -1208,9 +1279,9 @@ return view.extend({
 		mainContent = el('div', { class: 'eng-main' });
 		container.appendChild(mainContent);
 
-		/* Bottom navigation bar (mobile) */
-		var navbar = el('div', { class: 'eng-navbar' });
-		NAV.forEach(function(item) {
+		/* Bottom navigation bar — mobile: 4 tabs, desktop: 4 + extra */
+		var navbar = el('div', { class: 'eng-navbar eng-navbar-mobile' });
+		NAV_MOBILE.forEach(function(item) {
 			var pill = el('div', {
 				class: 'eng-nav-pill' + (item.id === state.page ? ' active' : ''),
 				onclick: function() { navigate(item.id); }
@@ -1222,6 +1293,21 @@ return view.extend({
 			navbar.appendChild(pill);
 		});
 		container.appendChild(navbar);
+
+		/* Desktop-only extended bottom nav */
+		var navbarDesktop = el('div', { class: 'eng-navbar eng-navbar-desktop' });
+		NAV_MOBILE.concat(NAV_DESKTOP_EXTRA).forEach(function(item) {
+			var pill = el('div', {
+				class: 'eng-nav-pill' + (item.id === state.page ? ' active' : ''),
+				onclick: function() { navigate(item.id); }
+			}, [
+				el('div', { class: 'eng-nav-icon' }, [item.icon]),
+				el('div', { class: 'eng-nav-label' }, [item.label])
+			]);
+			navItems['d_' + item.id] = pill;
+			navbarDesktop.appendChild(pill);
+		});
+		container.appendChild(navbarDesktop);
 
 		/* Load accounts and initial data */
 		loadAccounts();
