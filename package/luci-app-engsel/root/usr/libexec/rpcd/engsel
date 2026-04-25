@@ -411,6 +411,15 @@ authenticate_account() {
 	printf '%s' "$access_token" > "$CACHE_DIR/access_token"
 	printf '%s' "$num" > "$ACTIVE_FILE"
 
+	# Fetch profile FIRST so real_sid/real_stype are available for token update
+	local profile
+	profile=$(api_request "api/v8/profile" '{}' "$id_token")
+	local real_stype real_sid
+	real_stype=$(json_gets "$profile" '@.data.profile.subscription_type' 2>/dev/null)
+	real_sid=$(json_gets "$profile" '@.data.profile.subscriber_id' 2>/dev/null)
+	[ -n "$real_stype" ] && stype="$real_stype"
+	printf '%s' "$stype" > "$CACHE_DIR/stype"
+
 	# Update refresh token in file (CIAM rotates tokens on each refresh)
 	if [ -n "$new_rt" ]; then
 		local count_tok i_tok new_arr='['
@@ -439,15 +448,6 @@ authenticate_account() {
 		new_arr="${new_arr}]"
 		printf '%s' "$new_arr" > "$TOKENS_FILE"
 	fi
-
-	# Fetch profile to update subscription type
-	local profile
-	profile=$(api_request "api/v8/profile" '{}' "$id_token")
-	local real_stype real_sid
-	real_stype=$(json_gets "$profile" '@.data.profile.subscription_type' 2>/dev/null)
-	real_sid=$(json_gets "$profile" '@.data.profile.subscriber_id' 2>/dev/null)
-	[ -n "$real_stype" ] && stype="$real_stype"
-	printf '%s' "$stype" > "$CACHE_DIR/stype"
 
 	# Fetch balance
 	local balance_resp
