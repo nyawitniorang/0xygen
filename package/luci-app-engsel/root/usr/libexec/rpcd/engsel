@@ -45,36 +45,37 @@ gen_uuid() {
 		$((RANDOM)) $((RANDOM)) $((RANDOM))
 }
 
-get_ts_java() {
-	local epoch_ms
-	if [ -r /proc/uptime ]; then
-		epoch_ms=$(date +%s%3N 2>/dev/null || echo "$(date +%s)000")
-	else
-		epoch_ms="$(date +%s)000"
-	fi
-	local epoch_sec=$((epoch_ms / 1000))
-	local ms=$((epoch_ms % 1000))
-	local adj=$((epoch_sec + 25200))
-	local dt=$(date -u -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+_safe_epoch_ms() {
+	local val
+	val=$(date +%s%3N 2>/dev/null)
+	case "$val" in *[!0-9]*|'') val="$(date +%s)000" ;; esac
+	echo "$val"
+}
+
+_format_ts() {
+	local epoch_sec="$1" ms="$2" delta="$3"
+	local adj=$((epoch_sec + 25200 + delta))
+	local dt
+	dt=$(date -u -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
 		TZ=UTC date -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
 		date -u -r "$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
 	printf '%s.%03d+0700' "$dt" "$ms"
+}
+
+get_ts_java() {
+	local epoch_ms
+	epoch_ms=$(_safe_epoch_ms)
+	_format_ts "$((epoch_ms / 1000))" "$((epoch_ms % 1000))" 0
 }
 
 get_ts_header() {
 	local epoch_ms
-	epoch_ms=$(date +%s%3N 2>/dev/null || echo "$(date +%s)000")
-	local epoch_sec=$((epoch_ms / 1000))
-	local ms=$((epoch_ms % 1000))
-	local adj=$((epoch_sec + 25200 - 300))
-	local dt=$(date -u -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
-		TZ=UTC date -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
-		date -u -r "$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
-	printf '%s.%03d+0700' "$dt" "$ms"
+	epoch_ms=$(_safe_epoch_ms)
+	_format_ts "$((epoch_ms / 1000))" "$((epoch_ms % 1000))" -300
 }
 
 get_epoch_ms() {
-	date +%s%3N 2>/dev/null || echo "$(date +%s)000"
+	_safe_epoch_ms
 }
 
 # ── crypto ───────────────────────────────────────────────────────
@@ -265,17 +266,11 @@ ciam_submit_otp() {
 	fi
 
 	local epoch_ms ts_for_sign ts_hdr ax_sig fp dev_id req_id
-	epoch_ms=$(get_epoch_ms)
+	epoch_ms=$(_safe_epoch_ms)
 	local epoch_sec=$((epoch_ms / 1000))
 	local ms=$((epoch_ms % 1000))
-	local adj=$((epoch_sec + 25200))
-	ts_for_sign=$(date -u -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
-		date -u -r "$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
-	ts_for_sign=$(printf '%s.%03d+0700' "$ts_for_sign" "$ms")
-	local adj2=$((epoch_sec + 25200 - 300))
-	ts_hdr=$(date -u -d "@$adj2" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
-		date -u -r "$adj2" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
-	ts_hdr=$(printf '%s.%03d+0700' "$ts_hdr" "$ms")
+	ts_for_sign=$(_format_ts "$epoch_sec" "$ms" 0)
+	ts_hdr=$(_format_ts "$epoch_sec" "$ms" -300)
 
 	ax_sig=$(make_ax_api_sig "${AX_API_SIG_KEY:-18b4d589826af50241177961590e6693}" \
 		"$ts_for_sign" "$final_contact" "$code" "$contact_type")
