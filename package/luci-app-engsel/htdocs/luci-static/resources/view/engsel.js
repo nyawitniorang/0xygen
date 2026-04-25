@@ -722,7 +722,7 @@ function renderBuyOption(ct) {
 			results.innerHTML = '';
 			var pkg = (r && r.data && r.data.package_detail) || (r && r.data) || r;
 			if (pkg && pkg.error) { showAlert(results, 'Tidak ditemukan: ' + pkg.error, 'danger'); return; }
-			showPurchaseModal({ package_name: pkg.package_name || pkg.name || code, price: pkg.price || pkg.base_price || 0, option_code: code, token_confirmation: pkg.token_confirmation || '', payment_for: pkg.payment_for || 'BUY_PACKAGE' });
+			showPurchaseModal({ package_name: pkg.package_name || pkg.name || code, price: pkg.price || pkg.base_price || 0, option_code: code, token_confirmation: pkg.token_confirmation || pkg.confirmation_token || '', payment_for: pkg.payment_for || 'BUY_PACKAGE' });
 		});
 	} }, ['Cari']);
 	form.appendChild(el('div', { class: 'eng-form-group' }, [
