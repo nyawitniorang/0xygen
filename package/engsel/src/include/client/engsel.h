@@ -83,6 +83,20 @@ cJSON* dukcapil_register(const char* base_url, const char* api_key,
                         const char* id_token,
                         const char* msisdn, const char* kk, const char* nik);
 
+/* Pre-cek status registrasi untuk MSISDN: dipakai sebelum submit Dukcapil
+ * agar bisa kasih info "sudah terdaftar / belum / butuh biometric" ke user.
+ * Endpoint: POST /api/v8/infos/regist/info dengan body {"msisdn": "..."}.
+ * Field penting di response.data: registration_status, is_nik_active,
+ * eligible_biometric, name, display_nik, display_kk, registration_date. */
+cJSON* get_registration_info(const char* base_url, const char* api_key,
+                             const char* xdata_key, const char* api_secret,
+                             const char* id_token, const char* msisdn);
+
+/* Map error code dari response register Dukcapil ke pesan Indonesia
+ * user-friendly (sumber: strings.xml MyXL 9.1.0). Return string statis,
+ * tidak perlu di-free. */
+const char* register_error_message(const char* code);
+
 /* MSISDN validasi standalone untuk menu V. */
 cJSON* validate_msisdn(const char* base_url, const char* api_key,
                        const char* xdata_key, const char* api_secret,
