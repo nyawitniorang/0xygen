@@ -2,10 +2,13 @@
 # rpcd plugin for luci-app-engsel
 # Provides JSON-RPC interface to the engsel MyXL API
 
-# Load environment - try shell sourcing first, then manual parse
+# Load environment — strip \r (CLI's env_loader strips \r\n,
+# but shell source does not, breaking vars if file has Windows line endings)
 if [ -f /etc/engsel/.env ]; then
-	. /etc/engsel/.env 2>/dev/null
-	# If sourcing didn't set expected vars, parse manually
+	_env_clean="/tmp/engsel-env-clean.$$"
+	tr -d '\r' < /etc/engsel/.env > "$_env_clean"
+	. "$_env_clean" 2>/dev/null
+	# If sourcing didn't set expected vars, parse manually from cleaned file
 	if [ -z "$BASE_CIAM_URL" ]; then
 		while IFS='=' read -r key val; do
 			case "$key" in
@@ -13,8 +16,9 @@ if [ -f /etc/engsel/.env ]; then
 			esac
 			val=$(printf '%s' "$val" | sed 's/^"//;s/"$//')
 			export "$key=$val" 2>/dev/null
-		done < /etc/engsel/.env
+		done < "$_env_clean"
 	fi
+	rm -f "$_env_clean"
 fi
 TOKENS_FILE="/etc/engsel/refresh-tokens.json"
 ACTIVE_FILE="/etc/engsel/active.number"
@@ -56,9 +60,12 @@ _format_ts() {
 	local epoch_sec="$1" ms="$2" delta="$3"
 	local adj=$((epoch_sec + 25200 + delta))
 	local dt
-	dt=$(date -u -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
-		TZ=UTC date -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
-		date -u -r "$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
+	# Primary: Lua (guaranteed on OpenWrt with LuCI installed)
+	dt=$(lua -e "print(os.date('!%Y-%m-%dT%H:%M:%S', $adj))" 2>/dev/null)
+	# Fallback 1: GNU coreutils date
+	[ -z "$dt" ] && dt=$(date -u -d "@$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
+	# Fallback 2: BSD date
+	[ -z "$dt" ] && dt=$(date -u -r "$adj" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)
 	printf '%s.%03d+0700' "$dt" "$ms"
 }
 
@@ -245,6 +252,7 @@ ciam_request_otp() {
 	dev_id=$(gen_ax_device_id)
 	ts_hdr=$(get_ts_header)
 	req_id=$(gen_uuid)
+	[ -n "$ENGSEL_DEBUG" ] && logger -t engsel "request_otp: ts_hdr='$ts_hdr' fp_len=${#fp} dev_id='$dev_id'"
 	curl -s -m 30 --connect-timeout 15 "$url" \
 		-H "Authorization: Basic ${BASIC_AUTH}" \
 		-H "User-Agent: ${UA}" \
@@ -278,6 +286,12 @@ ciam_submit_otp() {
 	fp=$(gen_ax_fingerprint)
 	dev_id=$(gen_ax_device_id)
 	req_id=$(gen_uuid)
+
+	if [ -n "$ENGSEL_DEBUG" ]; then
+		logger -t engsel "submit_otp: ts_for_sign='$ts_for_sign' ts_hdr='$ts_hdr'"
+		logger -t engsel "submit_otp: ct='$contact_type' contact='$final_contact' code='$code'"
+		logger -t engsel "submit_otp: sig='$ax_sig' fp_len=${#fp} dev_id='$dev_id'"
+	fi
 
 	local payload="contactType=${contact_type}&code=${code}&grant_type=password&contact=${final_contact}&scope=openid"
 
@@ -434,11 +448,28 @@ authenticate_account() {
 
 get_cached_token() {
 	[ -f "$CACHE_DIR/id_token" ] && cat "$CACHE_DIR/id_token" && return
+	# Auto-authenticate from stored refresh tokens (CLI login sync).
+	# CLI keeps id_token in memory only; rpcd must refresh to cache it.
+	local _idx _rt
+	_idx=$(get_active_idx)
+	_rt=$(jsonfilter -i "$TOKENS_FILE" -e "@[$_idx].refresh_token" 2>/dev/null)
+	if [ -n "$_rt" ]; then
+		authenticate_account "$_idx" > /dev/null 2>&1
+		[ -f "$CACHE_DIR/id_token" ] && cat "$CACHE_DIR/id_token" && return
+	fi
 	echo ""
 }
 
 get_cached_access() {
 	[ -f "$CACHE_DIR/access_token" ] && cat "$CACHE_DIR/access_token" && return
+	# Same auto-refresh as get_cached_token
+	local _idx _rt
+	_idx=$(get_active_idx)
+	_rt=$(jsonfilter -i "$TOKENS_FILE" -e "@[$_idx].refresh_token" 2>/dev/null)
+	if [ -n "$_rt" ]; then
+		authenticate_account "$_idx" > /dev/null 2>&1
+		[ -f "$CACHE_DIR/access_token" ] && cat "$CACHE_DIR/access_token" && return
+	fi
 	echo ""
 }
 
@@ -492,9 +523,17 @@ rpc_request_otp() {
 	if [ -z "$resp" ]; then
 		echo '{"error":"empty_response","detail":"Response kosong dari CIAM. Periksa koneksi internet router."}'
 		return
-	else
-		printf '{"status":"otp_sent","number":"%s","response":%s}' "$number" "$resp"
 	fi
+
+	# Check if CIAM returned an error (e.g. 101004 invalid timestamp)
+	local ciam_err ciam_desc
+	ciam_err=$(json_gets "$resp" '@.error' 2>/dev/null)
+	if [ -n "$ciam_err" ]; then
+		ciam_desc=$(json_gets "$resp" '@.error_description' 2>/dev/null)
+		printf '{"error":"ciam_error","detail":"%s: %s"}' "$ciam_err" "${ciam_desc:-unknown}"
+		return
+	fi
+	printf '{"status":"otp_sent","number":"%s","response":%s}' "$number" "$resp"
 }
 
 rpc_submit_otp() {
