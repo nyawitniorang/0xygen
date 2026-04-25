@@ -6,6 +6,7 @@
 #include "../include/cJSON.h"
 #include "../include/menu/features.h"
 #include "../include/menu/auto_buy.h"
+#include "../include/menu/discovery.h"
 #include "../include/client/circle.h"
 #include "../include/client/famplan.h"
 #include "../include/client/store.h"
@@ -1418,6 +1419,7 @@ void show_features_menu(const char* base_api, const char* api_key,
                "5. Custom Decoy\n"
                "6. Custom Paket HOT\n"
                "7. Auto Buy\n"
+               "8. Discovery paket tersembunyi\n"
                "-------------------------------------------------------\n"
                "00. Kembali\n"
                "99. Menu utama\n"
@@ -1444,6 +1446,9 @@ void show_features_menu(const char* base_api, const char* api_key,
         else if (strcmp(ch, "7") == 0)
             auto_buy_menu(base_api, api_key, xdata_key, x_api_secret,
                           enc_field_key, id_token);
+        else if (strcmp(ch, "8") == 0)
+            show_discovery_menu(base_api, api_key, xdata_key, x_api_secret,
+                                id_token);
         /* Kalau sub-menu minta unwind ke main (user pilih "99"), propagate. */
         if (nav_should_return()) return;
     }

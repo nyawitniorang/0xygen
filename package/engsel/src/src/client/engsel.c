@@ -744,6 +744,51 @@ cJSON* dukcapil_register(const char* base_url, const char* api_key,
     return r;
 }
 
+cJSON* get_registration_info(const char* base_url, const char* api_key,
+                             const char* xdata_key, const char* api_secret,
+                             const char* id_token, const char* msisdn) {
+    cJSON* p = cJSON_CreateObject();
+    cJSON_AddStringToObject(p, "msisdn", msisdn ? msisdn : "");
+    cJSON* r = send_api_request(base_url, api_key, xdata_key, api_secret,
+                                "api/v8/infos/regist/info", p,
+                                id_token ? id_token : "", "POST", NULL);
+    cJSON_Delete(p);
+    return r;
+}
+
+/* Pesan error register Dukcapil — string diambil dari strings.xml MyXL 9.1.0
+ * (values-in/strings.xml). Tetap bahasa Indonesia agar konsisten dengan UI XL. */
+const char* register_error_message(const char* code) {
+    if (!code || !code[0]) return "Terjadi kesalahan tidak dikenal saat registrasi.";
+    if (strcmp(code, "164") == 0) {
+        return "NIK Anda sudah mencapai batas maksimum registrasi nomor "
+               "prabayar (3 nomor per NIK). Silakan hubungi Live Chat XL "
+               "atau kunjungi XL Center terdekat.";
+    }
+    if (strcmp(code, "165") == 0) {
+        return "Data NIK / Nomor KK Anda tidak valid. Mohon periksa kembali "
+               "kombinasi NIK & KK Anda.";
+    }
+    if (strcmp(code, "166") == 0) {
+        return "Kode PUK Anda tidak valid. (Catatan: error ini biasanya "
+               "muncul di flow autopair PUK, bukan Dukcapil standar.)";
+    }
+    if (strcmp(code, "170") == 0) {
+        return "Mohon maaf, nomor gagal terhubung. Silakan coba lagi dengan "
+               "nomor XL lain. Pastikan nomor yang dimasukkan belum terdaftar "
+               "sebagai anggota Kuota Bersama.";
+    }
+    if (strcmp(code, "171") == 0) {
+        return "Nomor yang dihubungkan tidak memenuhi syarat Kuota Bersama. "
+               "Silakan coba lagi dengan nomor lain.";
+    }
+    if (strcmp(code, "174") == 0) {
+        return "Nomor yang Anda masukkan tidak terdaftar sebagai nomor XL "
+               "prabayar atau sudah tidak aktif.";
+    }
+    return "Sepertinya terjadi kesalahan. Mohon coba beberapa saat lagi.";
+}
+
 cJSON* validate_msisdn(const char* base_url, const char* api_key,
                        const char* xdata_key, const char* api_secret,
                        const char* id_token, const char* msisdn) {

@@ -112,6 +112,25 @@ void show_transaction_history_menu(const char* base_api, const char* api_key,
     }
 }
 
+/* Helper: ambil nilai status code dari response (root.status atau root.code).
+ * Kalau response sukses, kembalikan NULL. */
+static const char* response_error_code(cJSON* r) {
+    if (!r) return NULL;
+    /* Format umum response error: { "status": "FAILED", "code": "164",
+     * "code_detail": "164", "message": "", ... }. Kalau status SUCCESS,
+     * field code biasanya "00" / tidak ada. */
+    cJSON* st = cJSON_GetObjectItemCaseSensitive(r, "status");
+    if (cJSON_IsString(st) && st->valuestring &&
+        strcmp(st->valuestring, "SUCCESS") == 0) {
+        return NULL;
+    }
+    cJSON* c = cJSON_GetObjectItemCaseSensitive(r, "code");
+    if (cJSON_IsString(c) && c->valuestring && c->valuestring[0]) {
+        return c->valuestring;
+    }
+    return NULL;
+}
+
 void show_register_menu(const char* base_api, const char* api_key,
                         const char* xdata_key, const char* x_api_secret,
                         const char* id_token) {
@@ -119,16 +138,99 @@ void show_register_menu(const char* base_api, const char* api_key,
     section_header("Registrasi Kartu (Dukcapil)");
     read_msisdn("MSISDN (08/62xxxx) atau 99=batal: ", msisdn, sizeof(msisdn));
     if (strcmp(msisdn, "99") == 0 || !msisdn[0]) return;
-    read_line("NIK: ", nik, sizeof(nik));
+
+    /* Pre-cek status registrasi sebelum minta NIK/KK. Server XL aslinya juga
+     * memanggil endpoint ini lebih dulu di app MyXL — kita pakai untuk memberi
+     * info lebih jelas ke user (sudah terdaftar / butuh biometrik / belum). */
+    section_header("Registrasi Kartu (Dukcapil)");
+    printf("MSISDN: %s\n", msisdn);
+    printf("[*] Memeriksa status registrasi...\n");
+    fflush(stdout);
+
+    cJSON* info = get_registration_info(base_api, api_key, xdata_key,
+                                        x_api_secret, id_token, msisdn);
+    int proceed = 1;
+    if (json_status_is_success(info)) {
+        cJSON* d = cJSON_GetObjectItemCaseSensitive(info, "data");
+        const char* reg_status   = json_get_str(d, "registration_status", "");
+        const char* disp_nik     = json_get_str(d, "display_nik",         "");
+        const char* disp_kk      = json_get_str(d, "display_kk",          "");
+        const char* name         = json_get_str(d, "name",                "");
+        const char* reg_date     = json_get_str(d, "registration_date",   "");
+        cJSON* eligible_bio_node = d ? cJSON_GetObjectItemCaseSensitive(d, "eligible_biometric") : NULL;
+        int eligible_bio = cJSON_IsTrue(eligible_bio_node);
+
+        printf("\n");
+        rule('-');
+        printf("  Status saat ini: %s\n", reg_status[0] ? reg_status : "UNKNOWN");
+        if (name[0])     printf("  Nama          : %s\n", name);
+        if (disp_nik[0]) printf("  NIK           : %s\n", disp_nik);
+        if (disp_kk[0])  printf("  KK            : %s\n", disp_kk);
+        if (reg_date[0]) printf("  Tanggal       : %s\n", reg_date);
+        rule('-');
+
+        /* Kalau eligible biometric: beritahu user bahwa flow biometrik tidak
+         * didukung di engsel. Mereka tetap bisa coba flow Dukcapil standar. */
+        if (eligible_bio) {
+            printf("[!] Nomor ini eligible untuk registrasi via biometrik\n"
+                   "    (foto selfie + liveness). Engsel hanya mendukung\n"
+                   "    flow Dukcapil standar (NIK + KK).\n");
+        }
+
+        if (strcmp(reg_status, "REGISTERED") == 0) {
+            printf("[i] Nomor ini sudah terdaftar. Tidak perlu register ulang.\n");
+            char ans[8];
+            read_line("Tetap submit Dukcapil register? (y/N): ", ans, sizeof(ans));
+            if (ans[0] != 'y' && ans[0] != 'Y') proceed = 0;
+        }
+    } else {
+        printf("[!] Gagal mengambil status registrasi (lanjut tetap dicoba).\n");
+        if (info) {
+            const char* code = response_error_code(info);
+            if (code) printf("    Kode info: %s\n", code);
+        }
+    }
+    if (info) cJSON_Delete(info);
+
+    if (!proceed) { pause_enter(); return; }
+
+    printf("\n");
+    read_line("NIK (16 digit) atau 99=batal: ", nik, sizeof(nik));
     if (strcmp(nik, "99") == 0 || !nik[0]) return;
-    read_line("KK : ", kk,  sizeof(kk));
+    read_line("KK  (16 digit) atau 99=batal: ", kk, sizeof(kk));
     if (strcmp(kk, "99") == 0 || !kk[0]) return;
 
+    printf("\n[*] Mengirim registrasi...\n"); fflush(stdout);
     cJSON* r = dukcapil_register(base_api, api_key, xdata_key, x_api_secret,
                                  id_token, msisdn, kk, nik);
-    printf("\n--- Response ---\n");
-    if (r) { char* out = cJSON_Print(r); if (out) { printf("%s\n", out); free(out); } cJSON_Delete(r); }
-    else   { printf("[-] Tidak ada response.\n"); }
+
+    printf("\n");
+    rule('=');
+    if (json_status_is_success(r)) {
+        printf("  [+] Registrasi BERHASIL.\n");
+        printf("      MSISDN %s sudah terdaftar atas nama Anda.\n", msisdn);
+    } else {
+        const char* code = response_error_code(r);
+        printf("  [-] Registrasi GAGAL.\n");
+        if (code) {
+            printf("      Kode error: %s\n", code);
+            printf("      Pesan     : %s\n", register_error_message(code));
+        } else {
+            printf("      Server tidak mengembalikan kode error.\n");
+        }
+    }
+    rule('=');
+
+    /* Untuk debugging, tetap cetak JSON mentah agar user bisa kirim ke
+     * maintainer kalau ada error code yang belum di-mapping. */
+    if (r) {
+        printf("\n--- Response (raw JSON) ---\n");
+        char* out = cJSON_Print(r);
+        if (out) { printf("%s\n", out); free(out); }
+        cJSON_Delete(r);
+    } else {
+        printf("\n[-] Tidak ada response dari server.\n");
+    }
     pause_enter();
 }
 
