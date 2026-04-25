@@ -8,8 +8,7 @@ if [ -f /etc/engsel/.env ]; then
 	_env_clean="/tmp/engsel-env-clean.$$"
 	tr -d '\r' < /etc/engsel/.env > "$_env_clean"
 	. "$_env_clean" 2>/dev/null
-	rm -f "$_env_clean"
-	# If sourcing didn't set expected vars, parse manually
+	# If sourcing didn't set expected vars, parse manually from cleaned file
 	if [ -z "$BASE_CIAM_URL" ]; then
 		while IFS='=' read -r key val; do
 			case "$key" in
@@ -17,8 +16,9 @@ if [ -f /etc/engsel/.env ]; then
 			esac
 			val=$(printf '%s' "$val" | sed 's/^"//;s/"$//')
 			export "$key=$val" 2>/dev/null
-		done < /etc/engsel/.env
+		done < "$_env_clean"
 	fi
+	rm -f "$_env_clean"
 fi
 TOKENS_FILE="/etc/engsel/refresh-tokens.json"
 ACTIVE_FILE="/etc/engsel/active.number"
